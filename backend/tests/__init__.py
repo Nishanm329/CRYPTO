@@ -1,0 +1,3 @@
+"""
+CryptoSignal AI backend tests.
+"""

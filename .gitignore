@@ -1,0 +1,58 @@
+# Environment
+.env
+.env.local
+.env.*.local
+.env.crypto
+
+# Dependencies
+node_modules/
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Build artifacts
+dist/
+build/
+.next/
+out/
+
+# Cache
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Sensitive data
+*.key
+*.pem
+credentials.json
+secrets.json
+
+# Coverage
+htmlcov/
+.coverage
+*.cover
+
+# OS
+Thumbs.db
+.DS_Store

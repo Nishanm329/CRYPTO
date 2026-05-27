@@ -1,0 +1,173 @@
+version: "3.9"
+
+services:
+  # PostgreSQL database with TimescaleDB extension
+  postgres:
+    image: timescaledb/timescaledb:latest-pg15
+    container_name: crypto-signals-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_DB: ${DB_NAME:-crypto_signals}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - crypto-signals
+
+  # Redis for caching and rate limiting
+  redis:
+    image: redis:7-alpine
+    container_name: crypto-signals-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-changeme}
+    volumes:
+      - redis_data:/data
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - crypto-signals
+
+  # FastAPI backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crypto-signals-backend
+    expose:
+      - "8000"
+    environment:
+      ENVIRONMENT: production
+      HOST: 0.0.0.0
+      PORT: 8000
+      WORKERS: ${WORKERS:-4}
+
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: ${DB_NAME:-crypto_signals}
+      DB_POOL_SIZE: 20
+      DB_MAX_OVERFLOW: 40
+
+      # Redis
+      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379
+
+      # Logging
+      LOG_LEVEL: INFO
+
+      # External APIs
+      BINANCE_API_KEY: ${BINANCE_API_KEY:-}
+      BINANCE_API_SECRET: ${BINANCE_API_SECRET:-}
+      FEAR_GREED_API_KEY: ${FEAR_GREED_API_KEY:-}
+
+      # Monitoring
+      PROMETHEUS_ENABLED: "true"
+      SENTRY_DSN: ${SENTRY_DSN:-}
+
+      # API Keys
+      API_KEYS: ${API_KEYS:-demo-key-public:demo-user}
+
+      # CORS (set to production domain)
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://cryptosignal.com}
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    networks:
+      - crypto-signals
+
+  # Next.js frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.cryptosignal.com}
+        NEXT_PUBLIC_API_KEY: ${NEXT_PUBLIC_API_KEY:-demo-key-public}
+
+    container_name: crypto-signals-frontend
+    expose:
+      - "3000"
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.cryptosignal.com}
+      NEXT_PUBLIC_API_KEY: ${NEXT_PUBLIC_API_KEY:-demo-key-public}
+      NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    networks:
+      - crypto-signals
+
+  # Nginx reverse proxy with SSL termination
+  nginx:
+    image: nginx:alpine
+    container_name: crypto-signals-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./ssl/certs:/etc/nginx/certs:ro
+      - ./ssl/dhparam.pem:/etc/nginx/dhparam.pem:ro
+      - nginx_logs:/var/log/nginx
+
+    depends_on:
+      - backend
+      - frontend
+
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+    networks:
+      - crypto-signals
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  nginx_logs:
+    driver: local
+
+networks:
+  crypto-signals:
+    driver: bridge
