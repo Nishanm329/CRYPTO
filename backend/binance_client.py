@@ -13,6 +13,13 @@ BINANCE_BASE = "https://api.binance.com"
 BINANCE_FUTURES = "https://fapi.binance.com"
 FEAR_GREED_API = "https://api.alternative.me/fng/"
 
+# Stablecoins to filter out (no price movement)
+STABLECOINS = {
+    "USDT", "USDC", "BUSD", "DAI", "TUSD", "USDP", "FRAX",
+    "USDE", "EURC", "EURS", "EURT", "GBPT", "JPYT",
+    "FDUSD", "MATIC", "GRAI",  # GRAI is pegged to 1.00
+}
+
 # Cache to avoid hammering Binance
 _pair_cache: List[str] = []
 _pair_cache_ts: float = 0
@@ -46,6 +53,12 @@ async def get_all_usdt_pairs(min_volume_usdt: float = 1_000_000) -> List[str]:
 
         pairs = []
         for s in info["symbols"]:
+            base_asset = s.get("baseAsset", "")
+
+            # Skip stablecoin-to-stablecoin pairs (no price movement)
+            if base_asset in STABLECOINS:
+                continue
+
             if (
                 s["quoteAsset"] == "USDT"
                 and s["status"] == "TRADING"

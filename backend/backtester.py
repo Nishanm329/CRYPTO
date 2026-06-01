@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 
 from binance_client import get_klines
 from indicators import add_all_indicators, detect_ema_cross
+from signals import calculate_confidence, build_indicator_confirmations
 from models import BacktestResult
 
 
@@ -148,8 +149,9 @@ async def run_backtest(
     trades = []
     last_cross_idx = -10  # prevent double-counting
     next_entry_after = 0  # no new trade until this index (prevents overlaps)
+    min_confidence = 75  # Only trade very high-confidence signals
 
-    for i in range(2, len(df) - 1):
+    for i in range(50, len(df) - 1):  # Start at candle 50 for better indicators
         # Skip if still inside a previous trade's bars_held window
         if i < next_entry_after:
             continue
@@ -164,8 +166,42 @@ async def run_backtest(
         else:
             continue
 
+        # FILTER 1: Trend filter - only trade in strong macro trends
+        # Require price and EMA7 to be aligned with EMA50 (intermediate trend)
+        ema7 = df["ema7"].iloc[i]
+        ema50 = df["ema50"].iloc[i]
+        ema200 = df["ema200"].iloc[i]
+        price = df["close"].iloc[i]
+        rsi = df["rsi"].iloc[i]
+
+        if direction == "LONG":
+            # For longs: require bullish trend (price > EMA7 > EMA50)
+            if not (price > ema7 and ema7 > ema50):
+                continue
+            # Also require RSI not too overbought
+            if rsi > 75:
+                continue
+        else:
+            # For shorts: require bearish trend (price < EMA7 < EMA50)
+            if not (price < ema7 and ema7 < ema50):
+                continue
+            # Also require RSI not too oversold
+            if rsi < 25:
+                continue
+
+        # FILTER 2: High confidence signals only
+        confidence = calculate_confidence(
+            df.iloc[:i+1],
+            direction,
+            build_indicator_confirmations(df.iloc[:i+1], direction)
+        )
+
+        if confidence < min_confidence:
+            continue
+
         last_cross_idx = i
-        trade = _simulate_trade(df, i, direction, atr_mult_sl, atr_mult_tp)
+        # Tighter stop loss with dynamic sizing
+        trade = _simulate_trade(df, i, direction, atr_mult_sl=1.5, atr_mult_tp=atr_mult_tp)
         trades.append(trade)
         # Block new entries until this trade closes
         next_entry_after = i + trade["bars_held"] + 1

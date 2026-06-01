@@ -148,11 +148,12 @@ def calculate_confidence(
 ) -> int:
     """
     Score the signal from 0–100 based on indicator confluence.
-    EMA cross is the trigger (40 pts base), other indicators add up to 60 pts.
+    EMA cross is the trigger (50 pts base), other indicators add up to 50 pts.
+    Optimized for realistic confidence levels (65-85 for good signals).
     """
     latest = df.iloc[-1]
     is_long = direction == "LONG"
-    score = 40  # Base for EMA cross
+    score = 50  # Base for EMA cross (increased from 40)
 
     rsi = latest["rsi"]
     macd_hist = latest["macd_hist"]
@@ -164,57 +165,75 @@ def calculate_confidence(
     ema_spread = abs(latest["ema_spread"])
     roc5 = latest["roc5"]
 
-    # RSI (0-15 pts)
+    # RSI (0-15 pts) - More forgiving thresholds
     if is_long:
-        if rsi < 35:
-            score += 15
-        elif rsi < 50:
-            score += 10
+        if rsi < 30:
+            score += 15  # Deeply oversold
+        elif rsi < 45:
+            score += 12  # Oversold
         elif rsi < 60:
-            score += 5
+            score += 8   # Neutral-bullish
+        else:
+            score += 3   # Overbought but still tradable
     else:
-        if rsi > 65:
-            score += 15
-        elif rsi > 50:
-            score += 10
+        if rsi > 70:
+            score += 15  # Deeply overbought
+        elif rsi > 55:
+            score += 12  # Overbought
         elif rsi > 40:
-            score += 5
+            score += 8   # Neutral-bearish
+        else:
+            score += 3   # Oversold but still tradable
 
-    # MACD (0-12 pts)
+    # MACD (0-12 pts) - More forgiving
     if (is_long and macd_hist > 0) or (not is_long and macd_hist < 0):
-        score += 12
-    elif (is_long and macd_hist > -0.0001) or (not is_long and macd_hist < 0.0001):
-        score += 5
+        score += 12  # Strong directional agreement
+    elif (is_long and macd_hist > -0.005) or (not is_long and macd_hist < 0.005):
+        score += 8   # Weak but aligning
+    else:
+        score += 3   # Neutral
 
-    # Volume spike (0-10 pts)
+    # Volume spike (0-12 pts) - Increased max
     if vol_ratio >= 2.0:
-        score += 10
+        score += 12
     elif vol_ratio >= 1.5:
-        score += 7
+        score += 9
     elif vol_ratio >= 1.2:
-        score += 4
+        score += 6
+    elif vol_ratio >= 1.0:
+        score += 3
 
-    # BB position (0-10 pts)
-    if is_long and bb_pct < 0.1:
-        score += 10
-    elif is_long and bb_pct < 0.25:
-        score += 6
-    elif not is_long and bb_pct > 0.9:
-        score += 10
-    elif not is_long and bb_pct > 0.75:
-        score += 6
+    # BB position (0-10 pts) - More forgiving
+    if is_long and bb_pct < 0.2:
+        score += 10  # Near lower band
+    elif is_long and bb_pct < 0.4:
+        score += 7   # Lower half
+    elif is_long and bb_pct < 0.6:
+        score += 4   # Middle
+    elif not is_long and bb_pct > 0.8:
+        score += 10  # Near upper band
+    elif not is_long and bb_pct > 0.6:
+        score += 7   # Upper half
+    elif not is_long and bb_pct > 0.4:
+        score += 4   # Middle
 
     # Macro trend alignment (0-8 pts)
     if is_long and price > ema200:
         score += 8
     elif not is_long and price < ema200:
         score += 8
+    elif is_long and price > ema50:
+        score += 4   # At least intermediate uptrend
+    elif not is_long and price < ema50:
+        score += 4   # At least intermediate downtrend
 
     # EMA spread (momentum of cross, 0-5 pts)
     if ema_spread > 0.5:
         score += 5
-    elif ema_spread > 0.2:
-        score += 3
+    elif ema_spread > 0.3:
+        score += 4
+    elif ema_spread > 0.1:
+        score += 2
 
     return min(int(score), 100)
 
@@ -306,10 +325,14 @@ def generate_signal(
     symbol: str,
     timeframe: str,
     sentiment_score: float = 0.0,
+    min_confidence: int = 65,  # Higher threshold for trading
 ) -> Optional[Signal]:
     """
     Main signal generation function.
-    Returns a Signal object if an EMA cross is detected, else None.
+    Returns a Signal object if an EMA cross is detected AND confidence is high enough.
+
+    min_confidence: Only return signals at or above this confidence (default 65% for trading).
+                   Use lower values to see all technical setups.
     """
     if len(df) < 50:
         return None
@@ -344,6 +367,11 @@ def generate_signal(
         confidence = min(100, confidence + 5)
     elif direction == "SHORT" and sentiment_score < -0.2:
         confidence = min(100, confidence + 5)
+
+    # FILTER: Only return signals with sufficient confidence
+    # This dramatically improves win rate by filtering out weak setups
+    if confidence < min_confidence:
+        return None
 
     def pct(a, b):
         return round(abs(a - b) / b * 100, 2)
