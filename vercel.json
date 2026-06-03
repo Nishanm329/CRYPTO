@@ -4,26 +4,10 @@
   "devCommand": "npm run dev",
   "installCommand": "npm install",
   "framework": "nextjs",
+  "rootDirectory": "frontend",
   "env": {
-    "NEXT_PUBLIC_API_URL": {
-      "description": "Backend API URL",
-      "required": true
-    },
-    "NEXT_PUBLIC_ENVIRONMENT": {
-      "description": "Environment name",
-      "default": "production"
-    }
-  },
-  "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "https://crypto-signals-api.vercel.app/api/:path*"
-    }
-  ],
-  "functions": {
-    "api/**/*.py": {
-      "runtime": "python3.11"
-    }
+    "NEXT_PUBLIC_API_URL": "https://crypto-signals-api.vercel.app",
+    "NEXT_PUBLIC_ENVIRONMENT": "production"
   },
   "regions": ["sfo1"],
   "git": {
