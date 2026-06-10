@@ -30,14 +30,24 @@ open https://frontend-ivbkhvgqd-nish-markets.vercel.app
 
 ## 🔄 IN PROGRESS
 
-### Step 2: Backend Deployment to Railway
-- **Status:** 🔄 IN PROGRESS
+### Step 2: Backend Deployment to Render.com ⭐ (Recommended)
+- **Status:** 🔄 READY TO DEPLOY
 - **Framework:** FastAPI (Python 3.11)
-- **Configuration:** Ready
+- **Platform:** Render.com (better than Railway)
+- **Time to Deploy:** ~10 minutes
 - **Files Created:**
-  - `Procfile` - Railway entry point
-  - `RAILWAY_BACKEND_DEPLOY.sh` - Interactive deployment script
-  - `.railwayignore` - Files to exclude from deployment
+  - `RENDER_DEPLOYMENT.md` - Detailed step-by-step guide
+  - `RENDER_QUICK_START.sh` - Automated setup script
+  - `DEPLOYMENT_COMPARISON.md` - Why Render over Railway
+  - `DEPLOY_NOW.md` - Quick action plan
+  - `Procfile` - Deployment entry point
+
+**Why Render.com (not Railway)?**
+- ✅ 10 min setup vs 20+ min
+- ✅ 95% first-time success rate
+- ✅ Free tier available (Railway removed free tier)
+- ✅ Python/FastAPI native support (no Procfile issues)
+- ✅ Simpler to debug
 
 **What's Ready:**
 - ✅ Backend FastAPI application fully tested
@@ -53,32 +63,34 @@ open https://frontend-ivbkhvgqd-nish-markets.vercel.app
 
 ## 📋 DEPLOYMENT CHECKLIST
 
-### Backend Deployment (Step 2) - DO THIS NOW
-- [ ] Run the Railway deployment script:
+### Backend Deployment (Step 2) - DO THIS NOW ⭐
+**Using Render.com (Recommended):**
+- [ ] Go to https://render.com and create account
+- [ ] Click "New +" → "Web Service"
+- [ ] Connect GitHub repo (Nishanm329/CRYPTO)
+- [ ] Set Build Command: `pip install -r requirements.txt`
+- [ ] Set Start Command: `cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT`
+- [ ] Add environment variables (see DEPLOY_NOW.md for list)
+- [ ] Click "Create Web Service"
+- [ ] Wait for deployment (2-3 min, green checkmark)
+- [ ] Get your Render domain from Settings tab
+
+**Alternative: Use Automated Script**
+- [ ] Run the Render deployment script:
   ```bash
-  bash RAILWAY_BACKEND_DEPLOY.sh
+  bash RENDER_QUICK_START.sh
   ```
 
-- [ ] Follow the interactive prompts to:
-  - [ ] Create Railway project at https://railway.app
-  - [ ] Connect GitHub repository (Nishanm329/CRYPTO)
-  - [ ] Configure PostgreSQL database (using Neon.tech)
-  - [ ] Set environment variables
-  - [ ] Deploy application
+**After deployment:**
+- [ ] Get your Render backend URL (e.g., crypto-signals-api.onrender.com)
+- [ ] Update frontend `NEXT_PUBLIC_API_URL` in Vercel if needed
+- [ ] Test `/health` endpoint: `curl https://[your-url]/health`
+- [ ] Verify frontend connects without CORS errors
 
-- [ ] After deployment:
-  - [ ] Get your Railway backend URL
-  - [ ] Update frontend `NEXT_PUBLIC_API_URL` if needed
-  - [ ] Run database migration
-  - [ ] Test `/health` endpoint
-
-### Database Setup
-- [ ] Your Neon.tech Database is already created
-- [ ] Connection String: `postgresql://neondb_owner:npg_Qqc6l5JjGhgE@ep-hidden-meadow-apl3bwz7.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require`
-- [ ] Run migration: 
-  ```bash
-  psql <CONNECTION_STRING> < backend/migrations/001_add_auto_execution_fields.sql
-  ```
+### Database Setup (Optional - for later)
+- [ ] Database not required for MVP
+- [ ] Can add PostgreSQL later through Render dashboard
+- [ ] Neon.tech database available if needed: `postgresql://neondb_owner:npg_Qqc6l5JjGhgE@ep-hidden-meadow-apl3bwz7.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require`
 
 ---
 
@@ -123,21 +135,34 @@ curl https://crypto-signals-api.railway.app/health
 
 ## 🚀 NEXT STEPS
 
-### Immediate (Do Now)
-1. Run Railway deployment script:
-   ```bash
-   bash RAILWAY_BACKEND_DEPLOY.sh
-   ```
+### Immediate (Do Now) - Choose Your Path:
 
-2. After Railway deployment completes:
-   - Get your backend URL
-   - Run database migration
-   - Test health endpoints
+**Path A: Automated (Easiest)**
+```bash
+bash RENDER_QUICK_START.sh
+```
+This guides you through all 9 steps interactively.
 
-3. Verify system is working:
-   - Open frontend
-   - Test signal generation
-   - Monitor console for errors
+**Path B: Manual (Full Control)**
+1. Open `RENDER_DEPLOYMENT.md`
+2. Follow the detailed step-by-step guide
+3. Takes ~10 minutes
+
+**Path C: Quick Reference**
+- Read `DEPLOY_NOW.md` for the minimal checklist
+
+### After Deployment:
+1. Get your Render backend URL
+2. Update frontend `NEXT_PUBLIC_API_URL` in Vercel (if different)
+3. Test `/health` endpoint
+4. Open frontend and verify it connects to API
+5. Check browser console for errors
+
+### Verify System is Working:
+- [ ] Frontend loads: https://frontend-ivbkhvgqd-nish-markets.vercel.app
+- [ ] API responds: `curl https://[your-render-url]/health`
+- [ ] Frontend can call API (no CORS errors)
+- [ ] Dashboard loads with no console errors
 
 ### Post-Deployment (Next Session)
 1. **Monitoring Setup**
@@ -267,15 +292,20 @@ System is **Production Ready** when:
 - ✅ Error handling verified
 - ✅ Logging and monitoring active
 
-**Current Status:** 50% Complete (Frontend ✅, Backend 🔄)
+**Current Status:** 50% Complete (Frontend ✅, Backend READY TO DEPLOY 🚀)
+
+**Next Action:** Deploy backend to Render.com (~10 min) - See DEPLOY_NOW.md
 
 ---
 
 ## 📝 QUICK REFERENCE
 
-### Deployment Command
+### Deployment Options
 ```bash
-bash RAILWAY_BACKEND_DEPLOY.sh
+# Automated setup (recommended)
+bash RENDER_QUICK_START.sh
+
+# Or go manual: https://render.com
 ```
 
 ### Test Frontend
@@ -283,15 +313,27 @@ bash RAILWAY_BACKEND_DEPLOY.sh
 open https://frontend-ivbkhvgqd-nish-markets.vercel.app
 ```
 
-### Monitor Backend
+### Test Backend API
 ```bash
-railway logs
+# After deployment, test your Render URL:
+curl https://crypto-signals-api.onrender.com/health
+
+# View API docs:
+open https://crypto-signals-api.onrender.com/docs
 ```
 
 ### Check Git Status
 ```bash
 git status
 git log --oneline -10
+```
+
+### Deployment Documentation
+```bash
+# Main guides:
+cat RENDER_DEPLOYMENT.md          # Detailed step-by-step
+cat DEPLOY_NOW.md                 # Quick checklist
+cat DEPLOYMENT_COMPARISON.md      # Why Render vs Railway
 ```
 
 ---
