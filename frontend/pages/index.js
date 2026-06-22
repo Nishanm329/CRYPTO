@@ -22,6 +22,8 @@ const PortfolioView = dynamic(() => import("../components/PortfolioView"), { ssr
 const SettingsView = dynamic(() => import("../components/SettingsView"), { ssr: false });
 const StrategyLab = dynamic(() => import("../components/StrategyLab"), { ssr: false });
 const BacktestView = dynamic(() => import("../components/BacktestView"), { ssr: false });
+const TrackRecordView = dynamic(() => import("../components/TrackRecordView"), { ssr: false });
+const BotView = dynamic(() => import("../components/BotView"), { ssr: false });
 
 export default function Home() {
   const router = useRouter();
@@ -122,7 +124,7 @@ export default function Home() {
 
   if (activeNav === "scanner") return (
     <Layout activeNav={activeNav} onNavChange={setActiveNav} showOnboarding={showOnboarding} onOnboardingComplete={() => setShowOnboarding(false)}>
-      <SignalsView onSelectSymbol={handleSelectSymbol} selectedSymbol={selectedSymbol} />
+      <SignalsView onSelectSymbol={handleSelectSymbol} selectedSymbol={selectedSymbol} variant="scanner" />
     </Layout>
   );
 
@@ -153,6 +155,18 @@ export default function Home() {
   if (activeNav === "settings") return (
     <Layout activeNav={activeNav} onNavChange={setActiveNav} showOnboarding={showOnboarding} onOnboardingComplete={() => setShowOnboarding(false)}>
       <SettingsView />
+    </Layout>
+  );
+
+  if (activeNav === "track-record") return (
+    <Layout activeNav={activeNav} onNavChange={setActiveNav} showOnboarding={showOnboarding} onOnboardingComplete={() => setShowOnboarding(false)}>
+      <TrackRecordView />
+    </Layout>
+  );
+
+  if (activeNav === "bots") return (
+    <Layout activeNav={activeNav} onNavChange={setActiveNav} showOnboarding={showOnboarding} onOnboardingComplete={() => setShowOnboarding(false)}>
+      <BotView defaultSymbol={selectedSymbol} />
     </Layout>
   );
 

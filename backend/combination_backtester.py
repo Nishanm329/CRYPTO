@@ -293,6 +293,176 @@ def _compute_metrics(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+# ── Reusable trade collection over a bar-index window ─────────────────────────
+
+def _collect_trades(
+    df: pd.DataFrame,
+    filters: Set[str],
+    lo: int,
+    hi: int,
+    atr_mult_sl: float = 2.0,
+    atr_mult_tp: float = 3.0,
+) -> List[Dict[str, Any]]:
+    """
+    Run the EMA-cross + filter strategy, taking entries only on bars whose
+    index falls in [lo, hi). Trade exits may extend past `hi` (a position is
+    held until SL/TP), which is the realistic out-of-sample behavior.
+    """
+    trades: List[Dict[str, Any]] = []
+    last_cross_idx = -10
+    next_entry_after = 0
+    lo = max(2, lo)
+    hi = min(hi, len(df) - 1)
+
+    for i in range(lo, hi):
+        if i < next_entry_after:
+            continue
+        prev_above = df["ema7"].iloc[i - 1] > df["ema25"].iloc[i - 1]
+        curr_above = df["ema7"].iloc[i] > df["ema25"].iloc[i]
+        if not prev_above and curr_above and i - last_cross_idx > 3:
+            direction = "LONG"
+        elif prev_above and not curr_above and i - last_cross_idx > 3:
+            direction = "SHORT"
+        else:
+            continue
+        if not _passes_filters(df.iloc[i], direction, filters):
+            continue
+        last_cross_idx = i
+        trade = _simulate_trade(df, i, direction, atr_mult_sl, atr_mult_tp)
+        trades.append(trade)
+        next_entry_after = i + trade["bars_held"] + 1
+
+    return trades
+
+
+async def _prepare_history(symbol: str, timeframe: str, years: int) -> pd.DataFrame:
+    """Fetch history, add indicators + StochRSI, drop warm-up NaNs."""
+    start_ms = int(
+        (datetime.utcnow() - timedelta(days=years * 365)).timestamp() * 1000
+    )
+    df = await get_historical_klines(symbol, timeframe, start_ms)
+    df = add_all_indicators(df)
+    stoch_k, stoch_d = calculate_stoch_rsi(df["rsi"])
+    df["stoch_k"] = stoch_k
+    df["stoch_d"] = stoch_d
+    required = ["ema7", "ema25", "rsi", "atr", "macd_hist", "bb_pct", "vol_ratio", "stoch_k"]
+    return df.dropna(subset=required).reset_index()
+
+
+# ── Walk-Forward Validation ───────────────────────────────────────────────────
+
+async def run_walk_forward_backtest(
+    symbol: str,
+    timeframe: str = "1d",
+    years: int = 6,
+    n_splits: int = 5,
+    atr_mult_sl: float = 2.0,
+    atr_mult_tp: float = 3.0,
+) -> Dict[str, Any]:
+    """
+    Walk-forward (out-of-sample) validation of the combination strategies.
+
+    The in-sample backtest picks whichever combo looked best on the SAME data
+    it's scored on — that overstates real performance (curve-fitting). This
+    instead splits history into sequential folds: on each fold it selects the
+    best combo using only PAST data (training), then measures that combo on the
+    next, unseen window (test). Aggregating the test-window trades gives an
+    honest estimate, and the in-sample vs out-of-sample gap reveals overfitting.
+    """
+    df = await _prepare_history(symbol, timeframe, years)
+    if len(df) < (n_splits + 1) * 30:
+        raise ValueError(
+            f"Not enough data for {symbol} {timeframe} walk-forward "
+            f"({len(df)} bars; need ~{(n_splits + 1) * 30})"
+        )
+
+    n = len(df)
+    fold_size = n // (n_splits + 1)
+
+    folds: List[Dict[str, Any]] = []
+    oos_trades: List[Dict[str, Any]] = []
+
+    for k in range(1, n_splits + 1):
+        train_hi = fold_size * k          # expanding (anchored) training window
+        test_lo, test_hi = fold_size * k, fold_size * (k + 1)
+
+        # Select the best combo using ONLY in-sample (training) bars.
+        best_combo = None
+        best_train_metrics: Dict[str, Any] = {}
+        best_score = (-1e9, -1e9)
+        for combo in COMBINATIONS:
+            tr = _collect_trades(df, combo["filters"], 2, train_hi, atr_mult_sl, atr_mult_tp)
+            m = _compute_metrics(tr)
+            score = (m["sharpe_ratio"], m["profit_factor"])
+            if m["total_trades"] >= 5 and score > best_score:
+                best_score = score
+                best_combo = combo
+                best_train_metrics = m
+
+        # Fallback if no combo cleared the trade-count floor in training.
+        if best_combo is None:
+            best_combo = COMBINATIONS[0]
+            best_train_metrics = _compute_metrics(
+                _collect_trades(df, best_combo["filters"], 2, train_hi, atr_mult_sl, atr_mult_tp)
+            )
+
+        # Evaluate the CHOSEN combo on the next, unseen window.
+        test_trades = _collect_trades(
+            df, best_combo["filters"], test_lo, test_hi, atr_mult_sl, atr_mult_tp
+        )
+        oos_trades.extend(test_trades)
+        test_metrics = _compute_metrics(test_trades)
+
+        folds.append({
+            "fold": k,
+            "chosen_combo": best_combo["name"],
+            "chosen_combo_id": best_combo["id"],
+            "train_period": [str(df["timestamp"].iloc[0]), str(df["timestamp"].iloc[train_hi - 1])],
+            "test_period": [str(df["timestamp"].iloc[test_lo]), str(df["timestamp"].iloc[min(test_hi, n) - 1])],
+            "in_sample_sharpe": best_train_metrics.get("sharpe_ratio", 0.0),
+            "in_sample_win_rate": best_train_metrics.get("win_rate", 0.0),
+            "out_sample_sharpe": test_metrics["sharpe_ratio"],
+            "out_sample_win_rate": test_metrics["win_rate"],
+            "out_sample_trades": test_metrics["total_trades"],
+            "out_sample_return_pct": test_metrics["total_return_pct"],
+        })
+
+    # Aggregate every out-of-sample trade into one honest performance estimate.
+    # Pooling all OOS trades gives a stable Sharpe; per-fold Sharpe on a handful
+    # of trades is too noisy to compare directly.
+    aggregate = _compute_metrics(oos_trades)
+    oos_sharpe = aggregate["sharpe_ratio"]
+
+    # Optimistic baseline: the best combo measured on the FULL history (the
+    # number the in-sample backtest would proudly report).
+    in_sample_best = -1e9
+    for combo in COMBINATIONS:
+        m = _compute_metrics(_collect_trades(df, combo["filters"], 2, n, atr_mult_sl, atr_mult_tp))
+        if m["total_trades"] >= 5:
+            in_sample_best = max(in_sample_best, m["sharpe_ratio"])
+    if in_sample_best == -1e9:
+        in_sample_best = 0.0
+
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "years_tested": years,
+        "n_splits": n_splits,
+        "total_bars": n,
+        "start_date": str(df["timestamp"].iloc[0]),
+        "end_date": str(df["timestamp"].iloc[-1]),
+        "folds": folds,
+        "walk_forward": aggregate,            # pooled out-of-sample metrics
+        "in_sample_best_sharpe": round(in_sample_best, 2),
+        "out_sample_sharpe": oos_sharpe,
+        # How much the edge decays once it must predict unseen data. A large
+        # positive gap = the in-sample result was largely curve-fit.
+        "overfitting_gap": round(in_sample_best - oos_sharpe, 2),
+        "robust": oos_sharpe > 0 and aggregate["profit_factor"] > 1.0,
+        "generated_at": datetime.utcnow().isoformat(),
+    }
+
+
 # ── Main Entry Point ──────────────────────────────────────────────────────────
 
 async def run_combination_backtest(

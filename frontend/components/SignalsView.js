@@ -138,10 +138,13 @@ function SignalCard({ sig, selected, onClick, onExecuteTrade }) {
   );
 }
 
-export default function SignalsView({ onSelectSymbol, selectedSymbol }) {
+export default function SignalsView({ onSelectSymbol, selectedSymbol, variant = "signals" }) {
+  const isScanner = variant === "scanner";
   const [timeframe, setTimeframe] = useState("1h");
   const [filterDir, setFilterDir] = useState("ALL");
   const [sortKey, setSortKey] = useState("confidence");
+  // Scanner lets the user set their own confidence floor; null = adaptive default.
+  const [minConf, setMinConf] = useState(null);
 
   // Adaptive scan parameters based on timeframe for optimization
   const getScanParams = (tf) => {
@@ -159,10 +162,11 @@ export default function SignalsView({ onSelectSymbol, selectedSymbol }) {
   };
 
   const scanParams = getScanParams(timeframe);
+  const effectiveMinConf = isScanner && minConf != null ? minConf : scanParams.minConfidence;
 
   const { data: scanData, isLoading, mutate } = useSWR(
-    `scan-signals-${timeframe}`,
-    () => api.scan(timeframe, scanParams.pairs, scanParams.minConfidence),
+    `scan-${variant}-${timeframe}-${effectiveMinConf}`,
+    () => api.scan(timeframe, scanParams.pairs, effectiveMinConf),
     { refreshInterval: scanParams.refresh, revalidateOnFocus: false, dedupingInterval: 30000 }
   );
 
@@ -184,11 +188,25 @@ export default function SignalsView({ onSelectSymbol, selectedSymbol }) {
       <div className="shrink-0 border-b border-border px-5 py-3 flex items-center gap-4 flex-wrap">
         <div className="flex items-center gap-2">
           <div className="w-1.5 h-1.5 rounded-full bg-brand-green animate-pulse" />
-          <span className="text-sm font-bold text-tx">Live Signals</span>
+          <span className="text-sm font-bold text-tx">{isScanner ? "Market Scanner" : "Live Signals"}</span>
           {scanData && (
             <span className="text-xs text-tx-muted">{scanData.total_scanned} pairs scanned · {scanData.scan_duration_ms}ms</span>
           )}
         </div>
+
+        {/* Scanner-only: user-controlled minimum confidence threshold */}
+        {isScanner && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-tx-muted">Min Conf</span>
+            {[null, 40, 55, 70, 85].map((c) => (
+              <button key={c ?? "auto"} onClick={() => setMinConf(c)}
+                className={clsx("px-2 py-1 rounded-lg text-xs font-semibold transition-all",
+                  (minConf === c) ? "bg-brand-blue text-white" : "text-tx-muted hover:text-tx"
+                )}
+              >{c == null ? "Auto" : `${c}%`}</button>
+            ))}
+          </div>
+        )}
 
         {/* Summary badges */}
         {scanData && (

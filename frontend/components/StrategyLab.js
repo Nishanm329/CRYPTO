@@ -260,11 +260,14 @@ export default function StrategyLab({ defaultSymbol = "BTCUSDT" }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
+  const [wfLoading, setWfLoading] = useState(false);
+  const [wfData, setWfData] = useState(null);
 
   const runBacktest = useCallback(async () => {
     setLoading(true);
     setError(null);
     setData(null);
+    setWfData(null);
     setExpandedId(null);
     try {
       const result = await api.combinationBacktest(symbol, timeframe, years);
@@ -277,6 +280,20 @@ export default function StrategyLab({ defaultSymbol = "BTCUSDT" }) {
       setError(e.message ?? "Failed to run backtest");
     } finally {
       setLoading(false);
+    }
+  }, [symbol, timeframe, years]);
+
+  const runWalkForward = useCallback(async () => {
+    setWfLoading(true);
+    setError(null);
+    setWfData(null);
+    try {
+      const result = await api.walkForwardBacktest(symbol, timeframe, years);
+      setWfData(result);
+    } catch (e) {
+      setError(e.message ?? "Failed to run walk-forward validation");
+    } finally {
+      setWfLoading(false);
     }
   }, [symbol, timeframe, years]);
 
@@ -392,9 +409,36 @@ export default function StrategyLab({ defaultSymbol = "BTCUSDT" }) {
             )}
           </button>
 
-          {loading && (
+          {/* Walk-forward validation button */}
+          <button
+            onClick={runWalkForward}
+            disabled={wfLoading || loading}
+            title="Out-of-sample validation: picks the best combo on past data, then tests it on the next unseen window. Reveals overfitting."
+            className={clsx(
+              "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all border",
+              wfLoading || loading
+                ? "border-border text-tx-muted cursor-not-allowed"
+                : "border-brand-gold/40 text-brand-gold hover:bg-brand-gold/10"
+            )}
+          >
+            {wfLoading ? (
+              <>
+                <div className="w-3 h-3 border-2 border-brand-gold border-t-transparent rounded-full animate-spin" />
+                <span>Validating out-of-sample…</span>
+              </>
+            ) : (
+              <>
+                <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M3 12h4l3 8 4-16 3 8h4" />
+                </svg>
+                Walk-Forward Validate
+              </>
+            )}
+          </button>
+
+          {(loading || wfLoading) && (
             <span className="text-[10px] text-tx-muted animate-pulse">
-              Paginating Binance API · computing 12 combinations…
+              Paginating Binance API · {wfLoading ? "running rolling out-of-sample folds…" : "computing 12 combinations…"}
             </span>
           )}
         </div>
@@ -402,6 +446,92 @@ export default function StrategyLab({ defaultSymbol = "BTCUSDT" }) {
 
       {/* ── Body ────────────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto no-scrollbar">
+        {/* Walk-forward validation panel */}
+        {wfData && (
+          <div className="m-4 mb-0 bg-bg-card border border-brand-gold/30 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <div className="text-sm font-bold text-brand-gold">Walk-Forward Validation</div>
+                <div className="text-[10px] text-tx-muted mt-0.5">
+                  Out-of-sample test across {wfData.n_splits} rolling folds · pooled {wfData.walk_forward.total_trades} unseen trades
+                </div>
+              </div>
+              <span
+                className={clsx(
+                  "px-2.5 py-1 rounded-md text-xs font-bold border",
+                  wfData.robust
+                    ? "bg-brand-green/10 border-brand-green/30 text-brand-green"
+                    : "bg-brand-red/10 border-brand-red/30 text-brand-red"
+                )}
+              >
+                {wfData.robust ? "ROBUST" : "OVERFIT RISK"}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+              {[
+                { label: "In-Sample Sharpe", val: wfData.in_sample_best_sharpe, cls: "text-tx-muted", hint: "optimistic" },
+                { label: "Out-Sample Sharpe", val: wfData.out_sample_sharpe, cls: metricColor(wfData.out_sample_sharpe, 0.8, 0), hint: "honest" },
+                { label: "Overfitting Gap", val: wfData.overfitting_gap, cls: wfData.overfitting_gap > 2 ? "text-brand-red" : "text-brand-amber", hint: "lower is better" },
+                { label: "OOS Profit Factor", val: wfData.walk_forward.profit_factor, cls: metricColor(wfData.walk_forward.profit_factor, 1.3, 1.0) },
+              ].map(({ label, val, cls, hint }) => (
+                <div key={label} className="bg-bg border border-border rounded-lg p-3">
+                  <div className="text-[10px] text-tx-muted mb-1">{label}{hint ? <span className="text-tx-muted/60"> · {hint}</span> : null}</div>
+                  <div className={clsx("text-sm font-bold font-mono", cls)}>{val}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-3 gap-3 mb-3 text-center">
+              <div className="bg-bg border border-border rounded-lg p-2">
+                <div className="text-[10px] text-tx-muted">OOS Win Rate</div>
+                <div className="text-sm font-bold font-mono text-tx">{wfData.walk_forward.win_rate}%</div>
+              </div>
+              <div className="bg-bg border border-border rounded-lg p-2">
+                <div className="text-[10px] text-tx-muted">OOS Return</div>
+                <div className={clsx("text-sm font-bold font-mono", wfData.walk_forward.total_return_pct >= 0 ? "text-brand-green" : "text-brand-red")}>
+                  {wfData.walk_forward.total_return_pct >= 0 ? "+" : ""}{wfData.walk_forward.total_return_pct}%
+                </div>
+              </div>
+              <div className="bg-bg border border-border rounded-lg p-2">
+                <div className="text-[10px] text-tx-muted">OOS Max Drawdown</div>
+                <div className="text-sm font-bold font-mono text-brand-red">{wfData.walk_forward.max_drawdown}%</div>
+              </div>
+            </div>
+
+            {/* Per-fold breakdown */}
+            <div className="bg-bg border border-border rounded-lg overflow-hidden">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border text-tx-muted">
+                    <th className="py-1.5 pl-3 pr-2 text-left font-medium">Fold</th>
+                    <th className="py-1.5 pr-2 text-left font-medium">Chosen on training</th>
+                    <th className="py-1.5 pr-2 text-right font-medium">IS Sharpe</th>
+                    <th className="py-1.5 pr-2 text-right font-medium">OOS Sharpe</th>
+                    <th className="py-1.5 pr-2 text-right font-medium">OOS Win%</th>
+                    <th className="py-1.5 pr-3 text-right font-medium">Trades</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {wfData.folds.map((f) => (
+                    <tr key={f.fold} className="border-b border-border/50 last:border-0">
+                      <td className="py-1.5 pl-3 pr-2 text-tx-muted">{f.fold}</td>
+                      <td className="py-1.5 pr-2 text-tx">{f.chosen_combo}</td>
+                      <td className="py-1.5 pr-2 text-right font-mono text-tx-muted">{f.in_sample_sharpe}</td>
+                      <td className={clsx("py-1.5 pr-2 text-right font-mono", f.out_sample_sharpe >= 0 ? "text-brand-green" : "text-brand-red")}>{f.out_sample_sharpe}</td>
+                      <td className="py-1.5 pr-2 text-right font-mono text-tx">{f.out_sample_win_rate}%</td>
+                      <td className="py-1.5 pr-3 text-right font-mono text-tx-muted">{f.out_sample_trades}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="text-[10px] text-tx-muted mt-2 italic">
+              Each fold selects the best combo using only past data, then trades it on the next unseen window. A large gap between in-sample and out-of-sample Sharpe means the in-sample result was curve-fit.
+            </div>
+          </div>
+        )}
+
         {/* Error */}
         {error && (
           <div className="m-6 p-4 bg-brand-red/10 border border-brand-red/30 rounded-xl text-xs text-brand-red">
@@ -410,7 +540,7 @@ export default function StrategyLab({ defaultSymbol = "BTCUSDT" }) {
         )}
 
         {/* Empty state */}
-        {!data && !loading && !error && (
+        {!data && !wfData && !loading && !wfLoading && !error && (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-center px-8">
             <div className="w-16 h-16 rounded-2xl bg-brand-blue/10 border border-brand-blue/20 flex items-center justify-center">
               <svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="#3d7fff" strokeWidth="1.5">

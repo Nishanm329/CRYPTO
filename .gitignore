@@ -42,6 +42,10 @@ out/
 *.sqlite
 *.sqlite3
 
+# Runtime bot/track-record stores (local state, not source)
+backend/bots.json
+backend/signal_track.jsonl
+
 # Sensitive data
 *.key
 *.pem

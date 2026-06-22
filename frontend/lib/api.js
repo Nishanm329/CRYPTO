@@ -1,4 +1,8 @@
-const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+// All API calls go through the Next.js rewrite proxy (see next.config.js),
+// so the browser only ever talks to its own origin — no CORS, no HTTPS
+// mixed-content. The real backend URL is set via NEXT_PUBLIC_API_URL, which
+// next.config.js uses as the rewrite destination (server-side).
+const BASE = "";
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "demo-key-public";
 const requestCache = new Map();
 
@@ -64,6 +68,8 @@ async function apiFetch(path, opts = {}) {
 }
 
 export const api = {
+  request: (path, opts) => apiFetch(path, opts),
+
   scan: (timeframe = "1h", maxPairs = 50, minConfidence = 50) =>
     apiFetch(`/api/scan?timeframe=${timeframe}&max_pairs=${maxPairs}&min_confidence=${minConfidence}`),
 
@@ -85,17 +91,41 @@ export const api = {
 
   marketOverview: () => apiFetch("/api/market-overview"),
 
+  trackRecord: () => apiFetch("/api/track-record"),
+
+  bots: () => apiFetch("/api/bots"),
+
+  createBot: (mode, symbol, timeframe, config) =>
+    apiFetch("/api/bots", { method: "POST", body: JSON.stringify({ mode, symbol, timeframe, config }) }),
+
+  stopBot: (id) => apiFetch(`/api/bots/${id}/stop`, { method: "POST" }),
+
+  startBot: (id) => apiFetch(`/api/bots/${id}/start`, { method: "POST" }),
+
+  deleteBot: (id) => apiFetch(`/api/bots/${id}`, { method: "DELETE" }),
+
   combinationBacktest: (symbol, timeframe = "1d", years = 6) =>
     apiFetch(
       `/api/backtest/combinations/${symbol}?timeframe=${timeframe}&years=${years}`
     ),
+
+  walkForwardBacktest: (symbol, timeframe = "1d", years = 6, nSplits = 5) =>
+    apiFetch(
+      `/api/backtest/walk-forward/${symbol}?timeframe=${timeframe}&years=${years}&n_splits=${nSplits}`
+    ),
 };
 
 export function formatPrice(price, symbol = "") {
-  if (!price) return "–";
-  const numStr = price.toString();
-  const decimals = numStr.includes(".") ? numStr.split(".")[1].replace(/0+$/, "").length : 0;
-  const precision = Math.max(2, Math.min(decimals, 8));
+  if (price == null || isNaN(price)) return "–";
+  const abs = Math.abs(price);
+  // Scale precision by magnitude so large prices stay clean (BTC → 2dp)
+  // while micro-caps keep meaningful digits.
+  let precision;
+  if (abs >= 1000) precision = 2;
+  else if (abs >= 1) precision = 3;
+  else if (abs >= 0.1) precision = 4;
+  else if (abs >= 0.001) precision = 6;
+  else precision = 8;
   return price.toLocaleString("en-US", {
     minimumFractionDigits: precision,
     maximumFractionDigits: precision,

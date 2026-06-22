@@ -1,0 +1,14 @@
+# Render Blueprint — deploys the FastAPI backend from /backend via Docker.
+# Region is Frankfurt (NON-US) because Binance returns HTTP 451 to US cloud IPs.
+services:
+  - type: web
+    name: crypto-signals-backend
+    runtime: docker
+    region: frankfurt
+    plan: free
+    rootDir: backend
+    # Override the Dockerfile CMD so uvicorn binds Render's injected $PORT.
+    dockerCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: API_KEYS
+        value: demo-key-public:demo-user

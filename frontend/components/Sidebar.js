@@ -75,6 +75,26 @@ const NAV_MAIN = [
     ),
   },
   {
+    key: "track-record", label: "Track Record",
+    icon: (
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+        <path d="M3 3v18h18" />
+        <path d="M7 14l4-4 3 3 5-6" />
+      </svg>
+    ),
+  },
+  {
+    key: "bots", label: "Bots",
+    icon: (
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+        <rect x="3" y="11" width="18" height="10" rx="2" />
+        <circle cx="8" cy="16" r="1" />
+        <circle cx="16" cy="16" r="1" />
+        <path d="M12 7v4M12 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
+      </svg>
+    ),
+  },
+  {
     key: "research", label: "Research",
     icon: (
       <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">

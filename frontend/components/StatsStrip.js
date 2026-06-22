@@ -181,7 +181,7 @@ export default function StatsStrip({ marketOverview, sentiment }) {
             </div>
             <div className="flex justify-between">
               <span className="text-tx-muted">24h Volume</span>
-              <span className="font-bold text-tx">${((btc?.volume_24h ?? 0) + (eth?.volume_24h ?? 0)) / 1e9 > 1000 ? (((btc?.volume_24h ?? 0) + (eth?.volume_24h ?? 0)) / 1e12).toFixed(1) + "T" : (((btc?.volume_24h ?? 0) + (eth?.volume_24h ?? 0)) / 1e9).toFixed(1) + "B"}</span>
+              <span className="font-bold text-tx">${((btc?.volume_24h ?? 0) + (eth?.volume_24h ?? 0)) > 1000 ? (((btc?.volume_24h ?? 0) + (eth?.volume_24h ?? 0)) / 1000).toFixed(1) + "T" : ((btc?.volume_24h ?? 0) + (eth?.volume_24h ?? 0)).toFixed(1) + "B"}</span>
             </div>
           </div>
         </div>

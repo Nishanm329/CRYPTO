@@ -88,6 +88,42 @@ function SignalCard({ signal, loading }) {
         />
       </div>
       <div className="text-xs text-tx-muted mt-2 italic">Based on 1% risk</div>
+
+      {/* Indicator confirmations */}
+      {signal.indicators?.length > 0 && (
+        <div className="mt-4 pt-3 border-t border-border/60">
+          <div className="text-xs text-tx-muted uppercase tracking-wider mb-2">
+            Indicator Confirmations
+          </div>
+          <div className="space-y-0">
+            {signal.indicators.map((ind) => (
+              <IndicatorRow key={ind.name} ind={ind} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function IndicatorRow({ ind }) {
+  const isPos = ind.status === "BULLISH";
+  const isNeg = ind.status === "BEARISH";
+  const color = isPos ? "text-brand-green" : isNeg ? "text-brand-red" : "text-tx-muted";
+  return (
+    <div className="flex items-start gap-2 py-2 border-b border-border/60 last:border-0">
+      <span className={clsx("mt-0.5 text-sm shrink-0", color)}>
+        {isPos ? "✓" : isNeg ? "✗" : "·"}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-medium text-tx">{ind.name}</span>
+          <span className={clsx("text-xs font-mono shrink-0", color)}>{ind.value}</span>
+        </div>
+        {ind.description && (
+          <div className="text-xs text-tx-muted mt-0.5 leading-snug">{ind.description}</div>
+        )}
+      </div>
     </div>
   );
 }

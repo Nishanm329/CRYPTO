@@ -102,7 +102,7 @@ function TradingSettings({ settings, update, save }) {
   const [revoking, setRevoking] = useState(false);
 
   // Check if keys are stored on backend
-  React.useEffect(() => {
+  useEffect(() => {
     const checkKeysStatus = async () => {
       try {
         const status = await tradingApi.getKeysStatus();

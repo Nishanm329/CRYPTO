@@ -171,6 +171,209 @@ async def get_ticker_24h(symbol: Optional[str] = None) -> dict:
         return resp.json()
 
 
+async def get_derivatives_data(symbol: str) -> Optional[dict]:
+    """
+    Fetch funding rate + open-interest trend from Binance USDⓈ-M perpetual
+    futures. Returns None if the symbol has no perpetual market (many small
+    spot pairs don't), so callers should treat it as optional context.
+
+    funding_rate   — latest funding rate (e.g. +0.0001 = +0.01%). Positive
+                     means longs pay shorts (crowded longs); negative means
+                     shorts pay longs (crowded shorts).
+    oi_change_pct  — % change in open interest over the last ~24h. Rising OI
+                     means fresh leverage entering (conviction behind the move).
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            pi_resp, oi_resp = await asyncio.gather(
+                client.get(
+                    f"{BINANCE_FUTURES}/fapi/v1/premiumIndex",
+                    params={"symbol": symbol},
+                ),
+                client.get(
+                    f"{BINANCE_FUTURES}/futures/data/openInterestHist",
+                    params={"symbol": symbol, "period": "1h", "limit": 24},
+                ),
+            )
+
+        pi = pi_resp.json()
+        if not isinstance(pi, dict) or "lastFundingRate" not in pi:
+            return None
+        funding_rate = float(pi.get("lastFundingRate", 0.0))
+
+        oi_change_pct = None
+        oi = oi_resp.json()
+        if isinstance(oi, list) and len(oi) >= 2:
+            first = float(oi[0].get("sumOpenInterest", 0))
+            last = float(oi[-1].get("sumOpenInterest", 0))
+            if first > 0:
+                oi_change_pct = (last - first) / first * 100
+
+        return {"funding_rate": funding_rate, "oi_change_pct": oi_change_pct}
+    except Exception:
+        return None
+
+
+async def get_orderbook_imbalance(symbol: str, limit: int = 100) -> Optional[dict]:
+    """
+    Fetch the spot order book and measure bid/ask imbalance in the top `limit`
+    levels. Returns imbalance in [-1, +1]: positive = resting buy pressure
+    (more bid liquidity), negative = sell pressure. None on failure.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{BINANCE_BASE}/api/v3/depth",
+                params={"symbol": symbol, "limit": limit},
+            )
+        d = resp.json()
+        if not isinstance(d, dict) or "bids" not in d or "asks" not in d:
+            return None
+        bid_vol = sum(float(p) * float(q) for p, q in d["bids"])
+        ask_vol = sum(float(p) * float(q) for p, q in d["asks"])
+        total = bid_vol + ask_vol
+        if total <= 0:
+            return None
+        return {
+            "imbalance": (bid_vol - ask_vol) / total,
+            "bid_vol": bid_vol,
+            "ask_vol": ask_vol,
+        }
+    except Exception:
+        return None
+
+
+async def get_onchain_sentiment(symbol: str) -> Optional[dict]:
+    """
+    Fetch positioning/flow sentiment from Binance USDⓈ-M futures free data
+    endpoints as an on-chain / market-sentiment proxy. Returns None for
+    spot-only symbols without a perpetual market, so treat it as optional.
+
+    global_ls        — global long/short account ratio (retail crowd positioning).
+                       >1 = more accounts long than short.
+    top_ls           — top-trader long/short account ratio (smart-money positioning).
+    taker_ls         — taker buy/sell volume ratio (aggressive order flow);
+                       >1 = market buying into asks, <1 = selling into bids.
+    smart_divergence — top_ls - global_ls. Positive = smart money more long than
+                       the crowd (bullish tell); negative = crowd more long than
+                       smart money (contrarian bearish, crowded-long risk).
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            g_resp, t_resp, tk_resp = await asyncio.gather(
+                client.get(
+                    f"{BINANCE_FUTURES}/futures/data/globalLongShortAccountRatio",
+                    params={"symbol": symbol, "period": "1h", "limit": 1},
+                ),
+                client.get(
+                    f"{BINANCE_FUTURES}/futures/data/topLongShortAccountRatio",
+                    params={"symbol": symbol, "period": "1h", "limit": 1},
+                ),
+                client.get(
+                    f"{BINANCE_FUTURES}/futures/data/takerlongshortRatio",
+                    params={"symbol": symbol, "period": "1h", "limit": 1},
+                ),
+            )
+
+        def _last_ratio(resp, key):
+            data = resp.json()
+            if isinstance(data, list) and data:
+                return float(data[-1].get(key, 0)) or None
+            return None
+
+        global_ls = _last_ratio(g_resp, "longShortRatio")
+        top_ls = _last_ratio(t_resp, "longShortRatio")
+        taker_ls = _last_ratio(tk_resp, "buySellRatio")
+
+        if global_ls is None and top_ls is None and taker_ls is None:
+            return None
+
+        smart_divergence = None
+        if global_ls is not None and top_ls is not None:
+            smart_divergence = top_ls - global_ls
+
+        return {
+            "global_ls": global_ls,
+            "top_ls": top_ls,
+            "taker_ls": taker_ls,
+            "smart_divergence": smart_divergence,
+        }
+    except Exception:
+        return None
+
+
+async def get_onchain_macro(symbol: str) -> Optional[dict]:
+    """
+    Free on-chain-style macro context computed from Binance daily klines.
+
+    True on-chain feeds (Glassnode MVRV, exchange net-flows) require paid APIs,
+    so this derives the same edge from public spot data:
+
+    mayer_multiple — price / 200-day SMA. The Mayer Multiple is a widely-used
+                     cycle-position metric (the free MVRV cousin). >2.4 = market
+                     historically overheated (caution on new longs); <1.0 = deep
+                     value (longs favoured). cycle_zone is the labelled bucket.
+    buy_pressure   — net spot taker buy fraction over the last 14 daily bars minus
+                     0.5. Positive = aggressive market buying (accumulation, the
+                     free exchange-net-flow proxy); negative = distribution.
+    flow_label     — "accumulation" / "distribution" / "balanced".
+
+    Returns None if there isn't enough daily history.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"{BINANCE_BASE}/api/v3/klines",
+                params={"symbol": symbol, "interval": "1d", "limit": 250},
+            )
+        data = resp.json()
+        if not isinstance(data, list) or len(data) < 60:
+            return None
+
+        closes = np.array([float(d[4]) for d in data])
+        quote_vol = np.array([float(d[7]) for d in data])
+        taker_buy_quote = np.array([float(d[10]) for d in data])
+
+        price = float(closes[-1])
+        window = min(200, len(closes))
+        sma = float(closes[-window:].mean())
+        mayer = price / sma if sma > 0 else None
+        if mayer is None:
+            return None
+
+        if mayer >= 2.4:
+            cycle_zone = "overheated"
+        elif mayer >= 1.5:
+            cycle_zone = "elevated"
+        elif mayer >= 1.0:
+            cycle_zone = "fair value"
+        elif mayer >= 0.8:
+            cycle_zone = "undervalued"
+        else:
+            cycle_zone = "deep value"
+
+        n = min(14, len(taker_buy_quote))
+        tot_v = float(quote_vol[-n:].sum())
+        buy_pressure = None
+        flow_label = "balanced"
+        if tot_v > 0:
+            buy_frac = float(taker_buy_quote[-n:].sum()) / tot_v
+            buy_pressure = buy_frac - 0.5
+            if buy_pressure > 0.015:
+                flow_label = "accumulation"
+            elif buy_pressure < -0.015:
+                flow_label = "distribution"
+
+        return {
+            "mayer_multiple": round(mayer, 3),
+            "cycle_zone": cycle_zone,
+            "buy_pressure": round(buy_pressure, 4) if buy_pressure is not None else None,
+            "flow_label": flow_label,
+        }
+    except Exception:
+        return None
+
+
 async def get_fear_greed_index() -> dict:
     """Fetch the Crypto Fear & Greed Index from alternative.me (free, no key)."""
     try:

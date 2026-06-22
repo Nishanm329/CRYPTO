@@ -122,7 +122,7 @@ export default function TradingChart({ chartData, loading, className = "" }) {
 
   const [hoveredBar, setHoveredBar] = useState(null);
   const [lv, setLv] = useState(null);
-  const [activeIndicators, setActiveIndicators] = useState({ bb: true, vwap: true, rsi: true, macd: true, stoch: true });
+  const [activeIndicators, setActiveIndicators] = useState({ ema: true, bb: true, vwap: true, ew: false, rsi: true, macd: true, stoch: true });
   const [selectedTool, setSelectedTool] = useState(0);
 
   const syncCrosshair = useCallback((src, others, param) => {
@@ -170,12 +170,13 @@ export default function TradingChart({ chartData, loading, className = "" }) {
         });
         seriesRef.current.candle = candle;
 
-        seriesRef.current.ema7 = mc.addLineSeries({ color: "#ef4444", lineWidth: 1.5, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
-        seriesRef.current.ema25 = mc.addLineSeries({ color: "#3d7fff", lineWidth: 1.5, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
+        seriesRef.current.ema7 = mc.addLineSeries({ color: "#facc15", lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
+        seriesRef.current.ema25 = mc.addLineSeries({ color: "#38bdf8", lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
         seriesRef.current.bbUpper = mc.addLineSeries({ color: "rgba(100,160,255,0.6)", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
         seriesRef.current.bbMiddle = mc.addLineSeries({ color: "rgba(100,160,255,0.3)", lineWidth: 1, lineStyle: LineStyle.Dotted, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
         seriesRef.current.bbLower = mc.addLineSeries({ color: "rgba(100,160,255,0.6)", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
-        seriesRef.current.vwap = mc.addLineSeries({ color: "#f59e0b", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
+        seriesRef.current.vwap = mc.addLineSeries({ color: "#c084fc", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
+        seriesRef.current.ew = mc.addLineSeries({ color: "#eab308", lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, title: "" });
         seriesRef.current.volume = mc.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol" });
         mc.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
 
@@ -272,13 +273,15 @@ export default function TradingChart({ chartData, loading, className = "" }) {
     // Batch all series updates before fitting content
     try {
       s.candle.setData(chartData.bars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
-      if (chartData.signals?.length) s.candle.setMarkers(chartData.signals);
-      s.ema7.setData(chartData.ema7 || []);
-      s.ema25.setData(chartData.ema25 || []);
+      s.candle.setMarkers(activeIndicators.ema ? chartData.signals || [] : []);
+      s.ema7.setData(activeIndicators.ema ? chartData.ema7 || [] : []);
+      s.ema25.setData(activeIndicators.ema ? chartData.ema25 || [] : []);
       s.bbUpper.setData(activeIndicators.bb ? chartData.bb_upper || [] : []);
       s.bbMiddle.setData(activeIndicators.bb ? chartData.bb_middle || [] : []);
       s.bbLower.setData(activeIndicators.bb ? chartData.bb_lower || [] : []);
       s.vwap.setData(activeIndicators.vwap ? chartData.vwap || [] : []);
+      s.ew.setData(activeIndicators.ew ? chartData.elliott_wave || [] : []);
+      s.ew.setMarkers(activeIndicators.ew ? chartData.elliott_wave_markers || [] : []);
       s.volume.setData(chartData.volume || chartData.bars.map((b) => ({
         time: b.time, value: b.volume,
         color: b.close >= b.open ? "rgba(0,200,150,0.35)" : "rgba(239,68,68,0.35)",
@@ -331,6 +334,10 @@ export default function TradingChart({ chartData, loading, className = "" }) {
 
     // Only update series that changed - defer to next frame for batch
     requestAnimationFrame(() => {
+      s.ema7?.setData(activeIndicators.ema ? chartData.ema7 || [] : []);
+      s.ema25?.setData(activeIndicators.ema ? chartData.ema25 || [] : []);
+      s.candle?.setMarkers(activeIndicators.ema ? chartData.signals || [] : []);
+
       if (activeIndicators.bb) {
         s.bbUpper?.setData(chartData.bb_upper || []);
         s.bbMiddle?.setData(chartData.bb_middle || []);
@@ -343,6 +350,9 @@ export default function TradingChart({ chartData, loading, className = "" }) {
 
       s.vwap?.setData(activeIndicators.vwap ? chartData.vwap || [] : []);
 
+      s.ew?.setData(activeIndicators.ew ? chartData.elliott_wave || [] : []);
+      s.ew?.setMarkers(activeIndicators.ew ? chartData.elliott_wave_markers || [] : []);
+
       // Only fit if indicators changed (not on initial load)
       try {
         mainChartRef.current?.timeScale().fitContent();
@@ -350,7 +360,7 @@ export default function TradingChart({ chartData, loading, className = "" }) {
         if (!e.message.includes('disposed')) console.error('[TradingChart] fitContent error:', e);
       }
     });
-  }, [activeIndicators.bb, activeIndicators.vwap]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeIndicators.ema, activeIndicators.bb, activeIndicators.vwap, activeIndicators.ew]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const bar = hoveredBar;
 
@@ -375,8 +385,10 @@ export default function TradingChart({ chartData, loading, className = "" }) {
 
         <div className="flex items-center gap-3 ml-auto">
           {[
+            { key: "ema", label: "EMA 7/25" },
             { key: "bb", label: "BB" },
             { key: "vwap", label: "VWAP" },
+            { key: "ew", label: "EW" },
             { key: "rsi", label: "RSI" },
             { key: "macd", label: "MACD" },
             { key: "stoch", label: "Stoch" },
@@ -422,17 +434,20 @@ export default function TradingChart({ chartData, loading, className = "" }) {
         {/* Chart content */}
         <div className="flex-1 min-w-0 w-full flex flex-col relative overflow-hidden">
           {/* Indicator legend overlay */}
-          <div className="absolute top-1 left-2 z-10 flex flex-wrap gap-x-3 gap-y-0.5">
-            <LegendChip color="#ef4444" label="EMA 7 close" value={lv?.ema7} />
-            <LegendChip color="#3d7fff" label="EMA 25 close" value={lv?.ema25} />
-            {activeIndicators.bb && lv?.bb_upper && (
+          <div className="absolute top-1 left-2 z-10 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+            {activeIndicators.ema && (
               <>
-                <LegendChip color="rgba(100,160,255,0.9)" label={`BB 20 2`} value={lv.bb_upper} />
-                <span className="text-[10px] font-mono" style={{ color: "rgba(100,160,255,0.6)" }}>{formatPrice(lv.bb_middle)}</span>
-                <span className="text-[10px] font-mono" style={{ color: "rgba(100,160,255,0.6)" }}>{formatPrice(lv.bb_lower)}</span>
+                <LegendChip color="#facc15" label="EMA 7" value={lv?.ema7} />
+                <LegendChip color="#38bdf8" label="EMA 25" value={lv?.ema25} />
+                <span className="flex items-center gap-1 text-[10px] font-mono text-tx-muted">
+                  <span className="text-brand-green">▲</span>/<span className="text-brand-red">▼</span> cross
+                </span>
               </>
             )}
-            {activeIndicators.vwap && <LegendChip color="#f59e0b" label="VWAP" value={lv?.vwap} />}
+            {activeIndicators.bb && lv?.bb_upper && (
+              <LegendChip color="rgba(100,160,255,0.9)" label="BB 20,2" value={lv.bb_upper} />
+            )}
+            {activeIndicators.vwap && <LegendChip color="#c084fc" label="VWAP" value={lv?.vwap} />}
           </div>
 
           {/* Candlestick chart */}

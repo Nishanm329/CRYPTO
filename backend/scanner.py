@@ -8,8 +8,9 @@ from typing import List, Optional
 from datetime import datetime
 
 from binance_client import get_top_volume_pairs, get_klines, batch_get_tickers, get_fear_greed_index
-from signals import generate_signal
+from signals import generate_signal, HTF_MAP, compute_htf_bias
 from models import ScanResult, MarketScanResponse, SignalDirection
+from track_record import record_signal
 
 # Rate limiting: Binance allows 1200 weight/min for spot
 CONCURRENT_REQUESTS = 8
@@ -26,10 +27,28 @@ async def scan_symbol(
     """Scan a single symbol and return a ScanResult if a signal is found."""
     try:
         df = await get_klines(symbol, timeframe, limit=200)
-        signal = generate_signal(df, symbol, timeframe, sentiment_score)
+
+        # Higher-timeframe trend confirmation
+        htf_tf = HTF_MAP.get(timeframe)
+        htf_bias = None
+        if htf_tf:
+            try:
+                htf_df = await get_klines(symbol, htf_tf, limit=200)
+                htf_bias = compute_htf_bias(htf_df)
+            except Exception:
+                htf_bias = None
+
+        # No gate here — scan_market applies the user's min_confidence filter.
+        signal = generate_signal(
+            df, symbol, timeframe, sentiment_score, min_confidence=0,
+            htf_bias=htf_bias, htf_timeframe=htf_tf,
+        )
 
         if signal is None:
             return None
+
+        # Log publishable signals to the verified track record (deduped + forward-tested later).
+        record_signal(signal)
 
         ticker = ticker_data.get(symbol, {})
         price = float(ticker.get("lastPrice", df["close"].iloc[-1]))
