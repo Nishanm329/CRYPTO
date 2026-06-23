@@ -25,9 +25,9 @@ export default function ChartView({ defaultSymbol = "BTCUSDT" }) {
     : POPULAR;
 
   return (
-    <div className="flex h-full overflow-hidden">
-      {/* Left: symbol list */}
-      <div className="w-44 shrink-0 border-r border-border flex flex-col bg-bg-sidebar">
+    <div className="flex flex-col lg:flex-row h-full overflow-hidden">
+      {/* Left: symbol list (top strip on mobile) */}
+      <div className="w-full lg:w-44 shrink-0 border-b lg:border-b-0 lg:border-r border-border flex flex-col bg-bg-sidebar">
         <div className="p-2">
           <input
             value={query}
@@ -36,13 +36,13 @@ export default function ChartView({ defaultSymbol = "BTCUSDT" }) {
             className="w-full bg-bg border border-border rounded-lg px-2.5 py-1.5 text-xs text-tx placeholder-tx-muted outline-none focus:border-brand-blue transition-colors"
           />
         </div>
-        <div className="flex-1 overflow-y-auto no-scrollbar px-1 pb-2">
+        <div className="lg:flex-1 flex lg:flex-col overflow-x-auto lg:overflow-y-auto no-scrollbar px-1 pb-2 gap-1 lg:gap-0">
           {filtered.map(p => (
             <button
               key={p}
               onClick={() => setSymbol(p)}
               className={clsx(
-                "w-full text-left px-2.5 py-2 rounded-lg text-xs font-semibold transition-all mb-0.5",
+                "shrink-0 lg:w-full text-left px-2.5 py-2 rounded-lg text-xs font-semibold transition-all lg:mb-0.5 whitespace-nowrap",
                 symbol === p ? "bg-brand-blue/15 text-brand-blue" : "text-tx-muted hover:text-tx hover:bg-border/30"
               )}
             >
@@ -53,11 +53,11 @@ export default function ChartView({ defaultSymbol = "BTCUSDT" }) {
       </div>
 
       {/* Right: chart */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {/* TF bar */}
-        <div className="h-10 shrink-0 border-b border-border flex items-center px-4 gap-4">
-          <span className="text-sm font-bold text-tx">{symbol.replace("USDT","")}<span className="text-tx-muted font-normal">/USDT</span></span>
-          <div className="flex gap-0.5">
+        <div className="h-10 shrink-0 border-b border-border flex items-center px-3 lg:px-4 gap-3 lg:gap-4 overflow-x-auto no-scrollbar">
+          <span className="text-sm font-bold text-tx shrink-0">{symbol.replace("USDT","")}<span className="text-tx-muted font-normal">/USDT</span></span>
+          <div className="flex gap-0.5 shrink-0">
             {TFS.map(tf => (
               <button
                 key={tf}

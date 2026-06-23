@@ -186,14 +186,14 @@ export default function Home() {
       />
       <StatsStrip marketOverview={marketOverview} sentiment={sentiment} />
 
-      <div className="flex flex-1 min-h-0 w-full overflow-hidden">
+      <div className="flex flex-col lg:flex-row flex-1 min-h-0 w-full overflow-y-auto lg:overflow-hidden">
         {/* Chart + bottom grid */}
-        <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden p-3 pr-0 gap-3">
+        <div className="min-w-0 flex flex-col p-3 gap-3 lg:flex-1 lg:min-h-0 lg:pr-0 lg:overflow-hidden">
           <ErrorBoundary>
-            <TradingChart chartData={chartData} loading={chartLoading} className="flex-1 min-h-0" />
+            <TradingChart chartData={chartData} loading={chartLoading} className="h-[360px] lg:h-auto lg:flex-1 lg:min-h-0" />
           </ErrorBoundary>
 
-          <div className="grid grid-cols-2 gap-3 shrink-0">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 shrink-0">
             {/* Top Signals */}
             <div className="card">
               <div className="flex items-center justify-between mb-3">

@@ -70,15 +70,15 @@ export default function Header({ symbol = "BTC/USDT", timeframe, onTimeframeChan
   };
 
   return (
-    <header className="h-12 bg-bg-header border-b border-border flex items-center px-4 gap-4 shrink-0 z-30">
+    <header className="h-12 bg-bg-header border-b border-border flex items-center px-3 md:px-4 gap-2 md:gap-4 shrink-0 z-30 overflow-x-auto no-scrollbar">
       {/* Symbol selector */}
-      <button className="flex items-center gap-2 bg-bg-card border border-border rounded-lg px-3 py-1.5 hover:border-border-light transition-colors">
+      <button className="flex items-center gap-2 bg-bg-card border border-border rounded-lg px-3 py-1.5 hover:border-border-light transition-colors shrink-0">
         <span className="text-sm font-bold text-tx">{symbol}</span>
         <ChevronIcon />
       </button>
 
       {/* Timeframe buttons */}
-      <div className="flex items-center gap-0.5 bg-bg-card border border-border rounded-lg p-0.5">
+      <div className="flex items-center gap-0.5 bg-bg-card border border-border rounded-lg p-0.5 shrink-0">
         {TIMEFRAMES.map((tf) => {
           const isActive = normalizeDisplay(timeframe) === tf;
           return (
@@ -99,10 +99,10 @@ export default function Header({ symbol = "BTC/USDT", timeframe, onTimeframeChan
       </div>
 
       {/* Divider */}
-      <div className="h-5 w-px bg-border" />
+      <div className="h-5 w-px bg-border hidden md:block" />
 
       {/* Tool buttons */}
-      <div className="flex items-center gap-1">
+      <div className="hidden md:flex items-center gap-1">
         {[
           { icon: <IndicatorsIcon />, label: "Indicators" },
           { icon: <BellIcon />, label: "Alert" },
@@ -120,10 +120,10 @@ export default function Header({ symbol = "BTC/USDT", timeframe, onTimeframeChan
       </div>
 
       {/* Spacer */}
-      <div className="flex-1" />
+      <div className="flex-1 min-w-2" />
 
       {/* Right side */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 shrink-0">
         {/* Clock */}
         <span className="text-xs font-mono text-tx-muted hidden lg:block" suppressHydrationWarning>
           {time ? time.toUTCString().slice(17, 25) + " UTC" : ""}

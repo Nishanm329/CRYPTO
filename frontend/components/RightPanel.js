@@ -321,7 +321,7 @@ function FearGreedCard({ sentiment, loading }) {
 
 export default function RightPanel({ signal, signalLoading, sentiment, sentimentLoading }) {
   return (
-    <div className="w-[300px] shrink-0 flex flex-col gap-3 overflow-y-auto no-scrollbar border-l border-border p-3">
+    <div className="w-full lg:w-[300px] shrink-0 flex flex-col gap-3 lg:overflow-y-auto no-scrollbar border-t lg:border-t-0 lg:border-l border-border p-3">
       <SignalCard signal={signal} loading={signalLoading} />
       <SentimentCard sentiment={sentiment} loading={sentimentLoading} />
       <FearGreedCard sentiment={sentiment} loading={sentimentLoading} />
