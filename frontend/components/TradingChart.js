@@ -410,7 +410,7 @@ export default function TradingChart({ chartData, loading, className = "" }) {
       {/* ── Main area: left toolbar + chart ── */}
       <div className="flex flex-1 w-full overflow-hidden">
         {/* Left drawing toolbar */}
-        <div className="w-9 shrink-0 flex flex-col items-center gap-0.5 py-2 border-r border-border bg-bg-card">
+        <div className="w-9 shrink-0 hidden md:flex flex-col items-center gap-0.5 py-2 border-r border-border bg-bg-card">
           {TOOLBAR_TOOLS.map((tool, i) =>
             tool.separator ? (
               <div key={i} className="w-5 h-px bg-border my-1" />

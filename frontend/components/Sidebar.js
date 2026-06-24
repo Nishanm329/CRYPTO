@@ -1,3 +1,4 @@
+import { useState } from "react";
 import clsx from "clsx";
 
 const NAV_MAIN = [
@@ -203,49 +204,101 @@ export default function Sidebar({ activeNav = "dashboard", onNavChange }) {
         </div>
       </aside>
 
-      {/* Mobile Sidebar - Icon Only */}
-      <aside className="md:hidden flex flex-col w-16 shrink-0 bg-bg-sidebar border-r border-border h-full overflow-hidden">
-        {/* Logo */}
-        <div className="px-2 py-3 flex items-center justify-center border-b border-border">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-brand-blue to-purple-600 flex items-center justify-center">
-            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="white" strokeWidth="2.5">
-              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" fill="white" stroke="none" />
-            </svg>
+      {/* Mobile - Bottom tab bar + More sheet */}
+      <MobileNav activeNav={activeNav} onNavChange={onNavChange} />
+    </>
+  );
+}
+
+// Keys shown directly in the mobile bottom tab bar (rest go in the "More" sheet)
+const BOTTOM_TAB_KEYS = ["dashboard", "chart", "signals", "scanner"];
+
+function MoreIcon() {
+  return (
+    <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="5" cy="12" r="1.6" />
+      <circle cx="12" cy="12" r="1.6" />
+      <circle cx="19" cy="12" r="1.6" />
+    </svg>
+  );
+}
+
+function MobileNav({ activeNav, onNavChange }) {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const primary = BOTTOM_TAB_KEYS.map((k) => NAV_MAIN.find((n) => n.key === k)).filter(Boolean);
+  const moreItems = NAV_MAIN.filter((n) => !BOTTOM_TAB_KEYS.includes(n.key));
+  const moreActive = moreItems.some((n) => n.key === activeNav);
+
+  const select = (key) => {
+    onNavChange?.(key);
+    setMoreOpen(false);
+  };
+
+  return (
+    <>
+      {/* Bottom tab bar */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 h-14 bg-bg-sidebar/95 backdrop-blur border-t border-border flex items-stretch px-1 pb-[env(safe-area-inset-bottom)]">
+        {primary.map(({ key, label, icon }) => (
+          <button
+            key={key}
+            onClick={() => select(key)}
+            className={clsx(
+              "flex-1 flex flex-col items-center justify-center gap-0.5 rounded-lg transition-colors [&_svg]:w-[19px] [&_svg]:h-[19px]",
+              activeNav === key ? "text-brand-blue" : "text-tx-muted"
+            )}
+          >
+            {icon}
+            <span className="text-[10px] font-medium leading-none">{label}</span>
+          </button>
+        ))}
+        <button
+          onClick={() => setMoreOpen(true)}
+          className={clsx(
+            "flex-1 flex flex-col items-center justify-center gap-0.5 rounded-lg transition-colors",
+            moreActive ? "text-brand-blue" : "text-tx-muted"
+          )}
+        >
+          <MoreIcon />
+          <span className="text-[10px] font-medium leading-none">More</span>
+        </button>
+      </nav>
+
+      {/* More sheet */}
+      {moreOpen && (
+        <div className="md:hidden fixed inset-0 z-50" onClick={() => setMoreOpen(false)}>
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          <div
+            className="absolute bottom-0 inset-x-0 bg-bg-sidebar border-t border-border rounded-t-2xl p-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-10 h-1 rounded-full bg-border mx-auto mb-4" />
+            <div className="grid grid-cols-4 gap-2">
+              {moreItems.map(({ key, label, icon }) => (
+                <button
+                  key={key}
+                  onClick={() => select(key)}
+                  className={clsx(
+                    "flex flex-col items-center justify-center gap-1.5 py-3 rounded-xl transition-colors [&_svg]:w-[20px] [&_svg]:h-[20px]",
+                    activeNav === key ? "bg-brand-blue/15 text-brand-blue" : "text-tx-muted hover:bg-border/40"
+                  )}
+                >
+                  {icon}
+                  <span className="text-[10px] font-medium text-center leading-tight">{label}</span>
+                </button>
+              ))}
+              {NAV_BOTTOM.map(({ key, label, icon }) => (
+                <button
+                  key={key}
+                  className="flex flex-col items-center justify-center gap-1.5 py-3 rounded-xl text-tx-muted hover:bg-border/40 transition-colors [&_svg]:w-[20px] [&_svg]:h-[20px]"
+                >
+                  {icon}
+                  <span className="text-[10px] font-medium text-center leading-tight">{label}</span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-
-        {/* Main nav - Icon only */}
-        <nav className="flex-1 px-2 py-3 space-y-1 overflow-y-auto no-scrollbar">
-          {NAV_MAIN.map(({ key, label, icon }) => (
-            <button
-              key={key}
-              onClick={() => onNavChange?.(key)}
-              className={clsx(
-                "w-full flex items-center justify-center p-3 rounded-lg transition-all",
-                activeNav === key
-                  ? "bg-brand-blue/15 text-brand-blue"
-                  : "text-tx-muted hover:text-tx hover:bg-border/30"
-              )}
-              title={label}
-            >
-              {icon}
-            </button>
-          ))}
-        </nav>
-
-        {/* Bottom nav - Icon only */}
-        <div className="px-2 pb-3 border-t border-border pt-2 space-y-1">
-          {NAV_BOTTOM.map(({ key, label, icon }) => (
-            <button
-              key={key}
-              className="w-full flex items-center justify-center p-3 rounded-lg text-tx-muted hover:text-tx hover:bg-border/30 transition-all"
-              title={label}
-            >
-              {icon}
-            </button>
-          ))}
-        </div>
-      </aside>
+      )}
     </>
   );
 }

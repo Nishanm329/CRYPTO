@@ -309,7 +309,7 @@ function Layout({ activeNav, onNavChange, children, showOnboarding, onOnboarding
   return (
     <div className="flex h-screen overflow-hidden bg-bg">
       <Sidebar activeNav={activeNav} onNavChange={onNavChange} />
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden pb-14 md:pb-0">
         {children}
       </div>
       {showOnboarding && <Onboarding onComplete={onOnboardingComplete} />}
