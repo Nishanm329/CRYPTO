@@ -12,8 +12,9 @@ from signals import generate_signal, HTF_MAP, compute_htf_bias
 from models import ScanResult, MarketScanResponse, SignalDirection
 from track_record import record_signal
 
-# Rate limiting: Binance allows 1200 weight/min for spot
-CONCURRENT_REQUESTS = 8
+# Rate limiting: Binance allows 1200 weight/min for spot. Kline calls are weight
+# 1-2 each, so a 20-pair scan (~40 calls) is well within budget at higher concurrency.
+CONCURRENT_REQUESTS = 16
 SCAN_CACHE: dict = {}
 CACHE_TTL = 60  # seconds
 

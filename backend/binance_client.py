@@ -25,6 +25,20 @@ _pair_cache: List[str] = []
 _pair_cache_ts: float = 0
 _CACHE_TTL = 300  # seconds
 
+# Shared pooled HTTP client — reused across calls so we don't pay a fresh TLS
+# handshake on every request (a single scan makes ~40 kline calls).
+_http_client: Optional[httpx.AsyncClient] = None
+
+
+def get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=15,
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
+        )
+    return _http_client
+
 
 async def get_all_usdt_pairs(min_volume_usdt: float = 1_000_000) -> List[str]:
     """Return all actively trading USDT spot pairs on Binance."""
@@ -83,12 +97,12 @@ async def get_klines(
     symbol: str, interval: str, limit: int = 300
 ) -> pd.DataFrame:
     """Fetch OHLCV candlestick data from Binance."""
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(
-            f"{BINANCE_BASE}/api/v3/klines",
-            params={"symbol": symbol, "interval": interval, "limit": limit},
-        )
-        data = resp.json()
+    client = get_http_client()
+    resp = await client.get(
+        f"{BINANCE_BASE}/api/v3/klines",
+        params={"symbol": symbol, "interval": interval, "limit": limit},
+    )
+    data = resp.json()
 
     if not data or isinstance(data, dict):
         raise ValueError(f"No kline data for {symbol} {interval}")

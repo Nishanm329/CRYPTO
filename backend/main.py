@@ -292,39 +292,43 @@ async def get_chart(symbol: str, timeframe: str = "15m", limit: int = Query(100,
 @app.get("/api/signal/{symbol}")
 async def get_signal(symbol: str, timeframe: str = "15m"):
     symbol = normalize_symbol(symbol)
-    try:
-        df = await get_klines(symbol, timeframe, 300)
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-    try:
-        fg = await get_fear_greed_index()
-        sentiment_score = (fg.get("value", 50) - 50) / 50
-    except Exception:
-        sentiment_score = 0.0
-
-    # Higher-timeframe trend confirmation
     htf_tf = HTF_MAP.get(timeframe)
+
+    # All of these data sources are independent inputs to generate_signal, so
+    # fetch them concurrently instead of serially (was ~7 sequential round-trips).
+    df, fg, htf_df, derivatives, order_book, onchain, macro = await asyncio.gather(
+        get_klines(symbol, timeframe, 300),
+        get_fear_greed_index(),
+        get_klines(symbol, htf_tf, 300) if htf_tf else asyncio.sleep(0, result=None),
+        get_derivatives_data(symbol),
+        get_orderbook_imbalance(symbol),
+        get_onchain_sentiment(symbol),
+        get_onchain_macro(symbol),
+        return_exceptions=True,
+    )
+
+    # The primary kline series is required — a failure here is a 404.
+    if isinstance(df, Exception):
+        raise HTTPException(status_code=404, detail=str(df))
+
+    # Sentiment (degrade to neutral on failure).
+    sentiment_score = 0.0
+    if not isinstance(fg, Exception) and fg:
+        sentiment_score = (fg.get("value", 50) - 50) / 50
+
+    # Higher-timeframe trend confirmation (optional).
     htf_bias = None
-    if htf_tf:
+    if htf_tf and not isinstance(htf_df, Exception) and htf_df is not None:
         try:
-            htf_df = await get_klines(symbol, htf_tf, 300)
             htf_bias = compute_htf_bias(htf_df)
         except Exception:
             htf_bias = None
 
-    # Derivatives context (funding rate + open interest). Optional — None for
-    # spot pairs without a perpetual futures market.
-    derivatives = await get_derivatives_data(symbol)
-
-    # Order-book imbalance (resting bid/ask liquidity pressure).
-    order_book = await get_orderbook_imbalance(symbol)
-
-    # On-chain / positioning sentiment (retail vs smart-money long/short, taker flow).
-    onchain = await get_onchain_sentiment(symbol)
-
-    # On-chain macro: cycle position (Mayer Multiple) + spot taker accumulation.
-    macro = await get_onchain_macro(symbol)
+    # Remaining context sources are optional — drop any that errored.
+    derivatives = None if isinstance(derivatives, Exception) else derivatives
+    order_book = None if isinstance(order_book, Exception) else order_book
+    onchain = None if isinstance(onchain, Exception) else onchain
+    macro = None if isinstance(macro, Exception) else macro
 
     # min_confidence=0 so the user always sees the technical setup for the
     # symbol they explicitly selected (the scanner applies its own filter).
