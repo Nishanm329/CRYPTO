@@ -68,6 +68,13 @@ body {
 .num-pos { @apply text-brand-green; }
 .num-neg { @apply text-brand-red; }
 
+/* Hide stacked TradingView attribution logos (4 chart instances) */
+#tv-attr-logo,
+a#tv-attr-logo,
+.tv-lightweight-charts a[href*="tradingview"] {
+  display: none !important;
+}
+
 /* Hide scrollbar but allow scroll */
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }

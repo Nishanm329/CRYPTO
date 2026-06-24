@@ -30,7 +30,7 @@ export default function Home() {
   const [timeframe, setTimeframe] = useState("1h");
   const [selectedSymbol, setSelectedSymbol] = useState("BTCUSDT");
   const [activeNav, setActiveNav] = useState("dashboard");
-  const [showOnboarding, setShowOnboarding] = useState(true);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   const { data: scanData, isLoading: scanLoading, mutate: mutateScan } = useSWR(
     `scan-${timeframe}`,

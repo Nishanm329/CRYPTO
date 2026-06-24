@@ -38,6 +38,10 @@ async def get_all_usdt_pairs(min_volume_usdt: float = 1_000_000) -> List[str]:
         resp = await client.get(f"{BINANCE_BASE}/api/v3/exchangeInfo")
         info = resp.json()
 
+        # Handle error/rate-limit responses (no "symbols" key) by falling back to last good cache
+        if not isinstance(info, dict) or "symbols" not in info:
+            return _pair_cache or []
+
         # Get 24h tickers for volume filter
         ticker_resp = await client.get(f"{BINANCE_BASE}/api/v3/ticker/24hr")
         ticker_data = ticker_resp.json()

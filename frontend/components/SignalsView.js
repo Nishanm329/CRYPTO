@@ -93,9 +93,9 @@ function SignalCard({ sig, selected, onClick, onExecuteTrade }) {
       {/* Upside & Exit Points */}
       <div className="grid grid-cols-2 gap-2 mb-2 text-[10px]">
         <div className="bg-bg p-1.5 rounded">
-          <div className="text-tx-muted mb-0.5">Upside Target</div>
+          <div className="text-tx-muted mb-0.5">{isLong ? "Upside Target" : "Downside Target"}</div>
           <div className="font-mono font-bold text-brand-green">${formatPrice(upsideTarget)}</div>
-          <div className="text-brand-green/80 text-[9px]">+{upsideGain.toFixed(1)}%</div>
+          <div className="text-brand-green/80 text-[9px]">{upsideGain >= 0 ? "+" : ""}{upsideGain.toFixed(1)}%</div>
         </div>
         <div className="bg-bg p-1.5 rounded">
           <div className="text-tx-muted mb-0.5">Exit Point</div>
