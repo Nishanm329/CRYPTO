@@ -238,20 +238,23 @@ export default function SignalsView({ onSelectSymbol, selectedSymbol, variant = 
               )}
             >{l}</button>
           ))}
-          <div className="w-px h-4 bg-border mx-1" />
-          {/* Timeframe */}
-          {TFS.map(tf => (
-            <button key={tf} onClick={() => setTimeframe(tf)}
-              className={clsx("px-2 py-1 rounded text-xs font-semibold transition-all",
-                timeframe === tf ? "bg-brand-blue text-white" : "text-tx-muted hover:text-tx"
-              )}
-            >{tf.toUpperCase()}</button>
-          ))}
           <button onClick={() => mutate()} className="ml-2 p-1.5 rounded-lg text-tx-muted hover:text-tx hover:bg-border transition-all">
             <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
               <path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
             </svg>
           </button>
+        </div>
+
+        {/* Timeframe — own full-width scrollable row on mobile so the 8 buttons
+            are reachable and tappable; stays inline & compact on desktop. */}
+        <div className="w-full md:w-auto flex items-center gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1 md:mx-0 md:px-0 md:ml-2">
+          {TFS.map(tf => (
+            <button key={tf} onClick={() => setTimeframe(tf)}
+              className={clsx("shrink-0 min-w-[46px] px-3 py-2 md:py-1 rounded-lg text-xs font-semibold transition-all",
+                timeframe === tf ? "bg-brand-blue text-white" : "bg-bg-card/60 text-tx-muted hover:text-tx active:bg-border"
+              )}
+            >{tf.toUpperCase()}</button>
+          ))}
         </div>
       </div>
 
