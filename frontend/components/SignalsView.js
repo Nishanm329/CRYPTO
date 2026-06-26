@@ -149,14 +149,18 @@ export default function SignalsView({ onSelectSymbol, selectedSymbol, variant = 
   // Adaptive scan parameters based on timeframe for optimization
   const getScanParams = (tf) => {
     const params = {
-      "1m": { pairs: 150, minConfidence: 50, refresh: 30000 },
-      "5m": { pairs: 150, minConfidence: 45, refresh: 45000 },
-      "15m": { pairs: 120, minConfidence: 42, refresh: 60000 },
-      "1h": { pairs: 100, minConfidence: 40, refresh: 60000 },
-      "4h": { pairs: 80, minConfidence: 38, refresh: 300000 },
-      "1d": { pairs: 60, minConfidence: 35, refresh: 300000 },
-      "3d": { pairs: 50, minConfidence: 35, refresh: 600000 },
-      "1w": { pairs: 40, minConfidence: 35, refresh: 600000 },
+      // Pair count capped at 20: Render's free CPU costs ~440ms/pair and the
+      // scan is CPU-bound, so 20 keeps the uncached first load ~11s (and the
+      // 60s server cache makes subsequent loads instant). Bump back up after
+      // a Render CPU upgrade.
+      "1m": { pairs: 20, minConfidence: 50, refresh: 30000 },
+      "5m": { pairs: 20, minConfidence: 45, refresh: 45000 },
+      "15m": { pairs: 20, minConfidence: 42, refresh: 60000 },
+      "1h": { pairs: 20, minConfidence: 40, refresh: 60000 },
+      "4h": { pairs: 20, minConfidence: 38, refresh: 300000 },
+      "1d": { pairs: 20, minConfidence: 35, refresh: 300000 },
+      "3d": { pairs: 20, minConfidence: 35, refresh: 600000 },
+      "1w": { pairs: 20, minConfidence: 35, refresh: 600000 },
     };
     return params[tf] || params["1h"];
   };
