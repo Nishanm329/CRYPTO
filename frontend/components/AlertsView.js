@@ -1,31 +1,33 @@
 import { useState, useEffect } from "react";
 import useSWR from "swr";
 import { api } from "../lib/api";
+import { useAlerts } from "../lib/alerts";
 import Toast from "./Toast";
 import clsx from "clsx";
-
-function useLocalAlerts() {
-  const [alerts, setAlerts] = useState([]);
-  useEffect(() => {
-    try { setAlerts(JSON.parse(localStorage.getItem("price_alerts") ?? "[]")); } catch {}
-  }, []);
-  const save = (list) => { setAlerts(list); localStorage.setItem("price_alerts", JSON.stringify(list)); };
-  const add = (alert) => save([...alerts, { ...alert, id: Date.now(), triggered: false }]);
-  const remove = (id) => save(alerts.filter(a => a.id !== id));
-  const toggle = (id) => save(alerts.map(a => a.id === id ? { ...a, triggered: !a.triggered } : a));
-  return { alerts, add, remove, toggle };
-}
 
 const POPULAR = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","DOGEUSDT","ADAUSDT"];
 
 export default function AlertsView() {
-  const { alerts, add, remove, toggle } = useLocalAlerts();
+  const { alerts, add, remove, toggle } = useAlerts();
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [condition, setCondition] = useState("above");
   const [price, setPrice] = useState("");
   const [note, setNote] = useState("");
   const [deletedAlert, setDeletedAlert] = useState(null);
   const [showUndo, setShowUndo] = useState(false);
+  const [notifPerm, setNotifPerm] = useState("default");
+
+  useEffect(() => {
+    if (typeof Notification !== "undefined") setNotifPerm(Notification.permission);
+  }, []);
+
+  const enableNotifications = async () => {
+    if (typeof Notification === "undefined") return;
+    try {
+      const perm = await Notification.requestPermission();
+      setNotifPerm(perm);
+    } catch {}
+  };
 
   const { data: tickerData } = useSWR(
     "alerts-tickers",
@@ -63,9 +65,27 @@ export default function AlertsView() {
         />
       )}
       <div className="flex flex-col h-full overflow-hidden">
-      <div className="shrink-0 border-b border-border px-5 py-3">
-        <h1 className="text-sm font-bold text-tx">Price Alerts</h1>
-        <p className="text-xs text-tx-muted mt-0.5">Get notified when a coin hits your target price.</p>
+      <div className="shrink-0 border-b border-border px-5 py-3 flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-sm font-bold text-tx">Price Alerts</h1>
+          <p className="text-xs text-tx-muted mt-0.5">Get notified when a coin hits your target price.</p>
+        </div>
+        {notifPerm === "granted" ? (
+          <span className="shrink-0 flex items-center gap-1.5 text-[11px] font-semibold text-brand-green">
+            <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.4"><polyline points="20 6 9 17 4 12" /></svg>
+            Notifications on
+          </span>
+        ) : notifPerm === "denied" ? (
+          <span className="shrink-0 text-[11px] text-tx-muted">Notifications blocked in browser</span>
+        ) : (
+          <button
+            onClick={enableNotifications}
+            className="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-brand-blue/10 text-brand-blue hover:bg-brand-blue/20 transition-colors"
+          >
+            <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0" /></svg>
+            Enable notifications
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto no-scrollbar p-5 flex flex-col gap-5 max-w-2xl mx-auto w-full">

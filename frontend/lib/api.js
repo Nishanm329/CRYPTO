@@ -91,6 +91,10 @@ export const api = {
 
   marketOverview: () => apiFetch("/api/market-overview"),
 
+  derivatives: (symbol) => apiFetch(`/api/derivatives/${symbol}`),
+
+  liquidations: (symbol) => apiFetch(`/api/liquidations/${symbol}`),
+
   trackRecord: () => apiFetch("/api/track-record"),
 
   bots: () => apiFetch("/api/bots"),

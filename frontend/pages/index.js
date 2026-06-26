@@ -24,6 +24,9 @@ const StrategyLab = dynamic(() => import("../components/StrategyLab"), { ssr: fa
 const BacktestView = dynamic(() => import("../components/BacktestView"), { ssr: false });
 const TrackRecordView = dynamic(() => import("../components/TrackRecordView"), { ssr: false });
 const BotView = dynamic(() => import("../components/BotView"), { ssr: false });
+const DerivativesView = dynamic(() => import("../components/DerivativesView"), { ssr: false });
+const WatchlistView = dynamic(() => import("../components/WatchlistView"), { ssr: false });
+const LiquidationView = dynamic(() => import("../components/LiquidationView"), { ssr: false });
 
 export default function Home() {
   const router = useRouter();
@@ -78,6 +81,7 @@ export default function Home() {
       else if (key === "d") setActiveNav("dashboard");
       else if (key === "t") setActiveNav("backtest");
       else if (key === "r") setActiveNav("research");
+      else if (key === "w") setActiveNav("watchlist");
     };
 
     window.addEventListener("keydown", handleKeyPress);
@@ -173,6 +177,24 @@ export default function Home() {
   if (activeNav === "research") return (
     <Layout activeNav={activeNav} onNavChange={setActiveNav} showOnboarding={showOnboarding} onOnboardingComplete={() => setShowOnboarding(false)}>
       <BacktestView />
+    </Layout>
+  );
+
+  if (activeNav === "derivatives") return (
+    <Layout activeNav={activeNav} onNavChange={setActiveNav} showOnboarding={showOnboarding} onOnboardingComplete={() => setShowOnboarding(false)}>
+      <DerivativesView defaultSymbol={selectedSymbol} />
+    </Layout>
+  );
+
+  if (activeNav === "watchlist") return (
+    <Layout activeNav={activeNav} onNavChange={setActiveNav} showOnboarding={showOnboarding} onOnboardingComplete={() => setShowOnboarding(false)}>
+      <WatchlistView onSelectSymbol={handleSelectSymbol} />
+    </Layout>
+  );
+
+  if (activeNav === "liquidations") return (
+    <Layout activeNav={activeNav} onNavChange={setActiveNav} showOnboarding={showOnboarding} onOnboardingComplete={() => setShowOnboarding(false)}>
+      <LiquidationView defaultSymbol={selectedSymbol} />
     </Layout>
   );
 

@@ -6,7 +6,7 @@ import logging
 import os
 import pandas as pd
 
-from binance_client import get_klines, get_fear_greed_index, get_top_volume_pairs, batch_get_tickers, get_derivatives_data, get_orderbook_imbalance, get_onchain_sentiment, get_onchain_macro
+from binance_client import get_klines, get_fear_greed_index, get_top_volume_pairs, batch_get_tickers, get_derivatives_data, get_orderbook_imbalance, get_onchain_sentiment, get_onchain_macro, get_derivatives_dashboard, get_liquidation_map
 from indicators import add_all_indicators, calculate_stoch_rsi
 from signals import generate_signal, HTF_MAP, compute_htf_bias
 from scanner import scan_market
@@ -492,6 +492,28 @@ async def get_sentiment():
         "overall_score": round(score, 3),
         "classification": fg.get("classification", "Neutral"),
     }
+
+@app.get("/api/derivatives/{symbol}")
+async def get_derivatives(symbol: str):
+    """Derivatives dashboard for one perpetual market: funding (current +
+    history), open interest (value + trend), long/short positioning, order-book
+    imbalance. 404 if the symbol has no USDⓈ-M perpetual market."""
+    symbol = normalize_symbol(symbol)
+    data = await get_derivatives_dashboard(symbol)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"No perpetual market for {symbol}")
+    return data
+
+@app.get("/api/liquidations/{symbol}")
+async def get_liquidations(symbol: str):
+    """Estimated liquidation-level heatmap (model from open interest + recent
+    price distribution across leverage tiers — NOT exchange liquidation data).
+    404 if the symbol has no USDⓈ-M perpetual market."""
+    symbol = normalize_symbol(symbol)
+    data = await get_liquidation_map(symbol)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"No perpetual market for {symbol}")
+    return data
 
 @app.get("/api/market-overview")
 async def get_market_overview():

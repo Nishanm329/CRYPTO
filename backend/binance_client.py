@@ -320,6 +320,246 @@ async def get_onchain_sentiment(symbol: str) -> Optional[dict]:
         return None
 
 
+async def get_derivatives_dashboard(symbol: str) -> Optional[dict]:
+    """
+    Aggregate everything the derivatives dashboard needs for one perpetual
+    market in a single parallel fetch: current + historical funding, open
+    interest (value + trend), long/short positioning (crowd vs smart money),
+    and spot order-book imbalance. Returns None if the symbol has no USDⓈ-M
+    perpetual market (premiumIndex fails); individual sections may be None.
+    """
+    client = get_http_client()
+    try:
+        pi_r, fund_r, oi_r, gls_r, tls_r, tk_r = await asyncio.gather(
+            client.get(f"{BINANCE_FUTURES}/fapi/v1/premiumIndex", params={"symbol": symbol}),
+            client.get(f"{BINANCE_FUTURES}/fapi/v1/fundingRate", params={"symbol": symbol, "limit": 30}),
+            client.get(f"{BINANCE_FUTURES}/futures/data/openInterestHist", params={"symbol": symbol, "period": "1h", "limit": 24}),
+            client.get(f"{BINANCE_FUTURES}/futures/data/globalLongShortAccountRatio", params={"symbol": symbol, "period": "1h", "limit": 24}),
+            client.get(f"{BINANCE_FUTURES}/futures/data/topLongShortAccountRatio", params={"symbol": symbol, "period": "1h", "limit": 1}),
+            client.get(f"{BINANCE_FUTURES}/futures/data/takerlongshortRatio", params={"symbol": symbol, "period": "1h", "limit": 1}),
+            return_exceptions=True,
+        )
+    except Exception:
+        return None
+
+    def _json(r):
+        try:
+            return r.json() if not isinstance(r, Exception) else None
+        except Exception:
+            return None
+
+    pi = _json(pi_r)
+    if not isinstance(pi, dict) or "lastFundingRate" not in pi:
+        return None  # no perpetual market for this symbol
+
+    funding_rate = float(pi.get("lastFundingRate", 0.0))
+    mark_price = float(pi.get("markPrice", 0.0)) or None
+    next_funding_time = int(pi.get("nextFundingTime", 0)) or None
+
+    # Funding history (each interval is ~8h → annualize by ×3×365)
+    fund_hist = []
+    fh = _json(fund_r)
+    if isinstance(fh, list):
+        for row in fh:
+            try:
+                fund_hist.append({"t": int(row["fundingTime"]), "v": float(row["fundingRate"])})
+            except Exception:
+                continue
+
+    # Open interest: latest USD value + 24h trend + history sparkline
+    oi_value, oi_change_pct, oi_hist = None, None, []
+    oi = _json(oi_r)
+    if isinstance(oi, list) and oi:
+        for row in oi:
+            try:
+                oi_hist.append({"t": int(row["timestamp"]), "v": float(row.get("sumOpenInterestValue", 0))})
+            except Exception:
+                continue
+        try:
+            oi_value = float(oi[-1].get("sumOpenInterestValue", 0)) or None
+            first = float(oi[0].get("sumOpenInterestValue", 0))
+            last = float(oi[-1].get("sumOpenInterestValue", 0))
+            if first > 0:
+                oi_change_pct = (last - first) / first * 100
+        except Exception:
+            pass
+
+    # Long/short positioning
+    def _last_ratio(data, key):
+        if isinstance(data, list) and data:
+            try:
+                return float(data[-1].get(key, 0)) or None
+            except Exception:
+                return None
+        return None
+
+    gls_data = _json(gls_r)
+    global_ls = _last_ratio(gls_data, "longShortRatio")
+    top_ls = _last_ratio(_json(tls_r), "longShortRatio")
+    taker_ls = _last_ratio(_json(tk_r), "buySellRatio")
+    smart_divergence = (top_ls - global_ls) if (global_ls is not None and top_ls is not None) else None
+
+    gls_hist = []
+    if isinstance(gls_data, list):
+        for row in gls_data:
+            try:
+                gls_hist.append({"t": int(row["timestamp"]), "v": float(row["longShortRatio"])})
+            except Exception:
+                continue
+
+    orderbook = await get_orderbook_imbalance(symbol)
+
+    return {
+        "symbol": symbol,
+        "mark_price": mark_price,
+        "funding": {
+            "current": funding_rate,
+            "annualized_pct": funding_rate * 3 * 365 * 100,
+            "next_funding_time": next_funding_time,
+            "history": fund_hist,
+        },
+        "open_interest": {
+            "value_usd": oi_value,
+            "change_pct_24h": oi_change_pct,
+            "history": oi_hist,
+        },
+        "long_short": {
+            "global": global_ls,
+            "top": top_ls,
+            "taker": taker_ls,
+            "smart_divergence": smart_divergence,
+            "global_history": gls_hist,
+        },
+        "orderbook": orderbook,
+    }
+
+
+async def get_liquidation_map(symbol: str) -> Optional[dict]:
+    """
+    ESTIMATED liquidation-level heatmap.
+
+    Binance offers no free historical liquidation feed, so this is a MODEL — it
+    projects where leveraged positions would be force-liquidated by combining:
+      • open interest (total notional currently at risk), and
+      • a volume-weighted distribution of recent traded prices (a proxy for where
+        positions were opened), spread across common leverage tiers (5/10/25/50/100x).
+    Long positions liquidate BELOW their entry, shorts ABOVE. Clusters mark price
+    zones that tend to act as magnets (cascading stops/liquidations). This is an
+    estimate of structure, NOT exact exchange liquidation data.
+
+    Returns None for symbols with no USDⓈ-M perpetual market.
+    """
+    # Approx maintenance-margin offsets per leverage tier (long, short), and a
+    # usage weight (how much OI typically sits at each tier).
+    LEV_TIERS = [
+        (5, 0.10),
+        (10, 0.25),
+        (25, 0.30),
+        (50, 0.20),
+        (100, 0.15),
+    ]
+    MMR = 0.005  # ~maintenance margin rate, pulls liq slightly toward entry
+
+    client = get_http_client()
+    try:
+        pi_r, oi_r, klines = await asyncio.gather(
+            client.get(f"{BINANCE_FUTURES}/fapi/v1/premiumIndex", params={"symbol": symbol}),
+            client.get(f"{BINANCE_FUTURES}/fapi/v1/openInterest", params={"symbol": symbol}),
+            get_klines(symbol, "1h", 168),  # 7d hourly = entry-price distribution
+            return_exceptions=True,
+        )
+    except Exception:
+        return None
+
+    def _json(r):
+        try:
+            return r.json() if not isinstance(r, Exception) else None
+        except Exception:
+            return None
+
+    pi = _json(pi_r)
+    if not isinstance(pi, dict) or "markPrice" not in pi:
+        return None  # no perpetual market
+
+    mark = float(pi.get("markPrice", 0.0))
+    if mark <= 0:
+        return None
+
+    oi = _json(oi_r)
+    oi_contracts = 0.0
+    if isinstance(oi, dict):
+        try:
+            oi_contracts = float(oi.get("openInterest", 0.0))
+        except Exception:
+            oi_contracts = 0.0
+    oi_notional = oi_contracts * mark  # USDⓈ-M: OI is in base units
+
+    if isinstance(klines, Exception) or klines is None or len(klines) == 0:
+        return None
+
+    closes = klines["close"].to_numpy()
+    vols = klines["volume"].to_numpy()
+    vsum = float(vols.sum()) or 1.0
+    weights = vols / vsum  # how much position-building happened at each price
+
+    # Price ladder ±18% around mark, 48 buckets.
+    lo, hi = mark * 0.82, mark * 1.18
+    nb = 48
+    width = (hi - lo) / nb
+    long_int = np.zeros(nb)   # long liquidations (downside magnets)
+    short_int = np.zeros(nb)  # short liquidations (upside magnets / squeeze fuel)
+
+    def _bucket(price):
+        if price < lo or price >= hi:
+            return -1
+        return int((price - lo) / width)
+
+    for c, w in zip(closes, weights):
+        for lev, lw in LEV_TIERS:
+            frac = 1.0 / lev - MMR
+            long_liq = c * (1.0 - frac)
+            short_liq = c * (1.0 + frac)
+            bl = _bucket(long_liq)
+            if bl >= 0:
+                long_int[bl] += w * lw
+            bs = _bucket(short_liq)
+            if bs >= 0:
+                short_int[bs] += w * lw
+
+    total = float(long_int.sum() + short_int.sum()) or 1.0
+    peak = float(max(long_int.max(), short_int.max())) or 1.0
+
+    levels = []
+    for i in range(nb):
+        price = lo + (i + 0.5) * width
+        l_notional = (long_int[i] / total) * oi_notional if oi_notional else 0.0
+        s_notional = (short_int[i] / total) * oi_notional if oi_notional else 0.0
+        levels.append({
+            "price": round(price, 8),
+            "long": round(float(long_int[i] / peak), 4),   # 0..1 intensity
+            "short": round(float(short_int[i] / peak), 4),
+            "long_usd": round(l_notional, 0),
+            "short_usd": round(s_notional, 0),
+        })
+    levels.reverse()  # highest price first (top of the ladder)
+
+    # Headline magnets: biggest cluster above and below current price.
+    above = [lv for lv in levels if lv["price"] > mark]
+    below = [lv for lv in levels if lv["price"] <= mark]
+    magnet_up = max(above, key=lambda lv: lv["short"], default=None)
+    magnet_down = max(below, key=lambda lv: lv["long"], default=None)
+
+    return {
+        "symbol": symbol,
+        "mark_price": mark,
+        "oi_notional": round(oi_notional, 0) if oi_notional else None,
+        "levels": levels,
+        "magnet_up": {"price": magnet_up["price"], "usd": magnet_up["short_usd"]} if magnet_up else None,
+        "magnet_down": {"price": magnet_down["price"], "usd": magnet_down["long_usd"]} if magnet_down else None,
+        "estimated": True,
+    }
+
+
 async def get_onchain_macro(symbol: str) -> Optional[dict]:
     """
     Free on-chain-style macro context computed from Binance daily klines.
