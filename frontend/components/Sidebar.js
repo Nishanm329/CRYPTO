@@ -57,7 +57,7 @@ const NAV_MAIN = [
     ),
   },
   {
-    key: "derivatives", label: "Derivatives",
+    key: "derivatives", label: "Derivatives", futures: true,
     icon: (
       <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
         <path d="m12 2 9 5-9 5-9-5 9-5Z" />
@@ -67,7 +67,7 @@ const NAV_MAIN = [
     ),
   },
   {
-    key: "liquidations", label: "Liquidations",
+    key: "liquidations", label: "Liquidations", futures: true,
     icon: (
       <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
         <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5Z" />
@@ -152,6 +152,12 @@ const NAV_MAIN = [
   },
 ];
 
+// Derivatives & Liquidations rely on Binance USDⓈ-M futures data, which is
+// geoblocked from the production backend's region. Hide them in prod builds;
+// they stay available in local dev where the futures API is reachable.
+const HIDE_FUTURES = process.env.NODE_ENV === "production";
+const NAV_VISIBLE = NAV_MAIN.filter((n) => !(HIDE_FUTURES && n.futures));
+
 const NAV_BOTTOM = [
   {
     key: "help", label: "Help",
@@ -191,7 +197,7 @@ export default function Sidebar({ activeNav = "dashboard", onNavChange }) {
 
         {/* Main nav */}
         <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto no-scrollbar">
-          {NAV_MAIN.map(({ key, label, icon }) => (
+          {NAV_VISIBLE.map(({ key, label, icon }) => (
             <button
               key={key}
               onClick={() => onNavChange?.(key)}
@@ -251,8 +257,8 @@ function MoreIcon() {
 
 function MobileNav({ activeNav, onNavChange }) {
   const [moreOpen, setMoreOpen] = useState(false);
-  const primary = BOTTOM_TAB_KEYS.map((k) => NAV_MAIN.find((n) => n.key === k)).filter(Boolean);
-  const moreItems = NAV_MAIN.filter((n) => !BOTTOM_TAB_KEYS.includes(n.key));
+  const primary = BOTTOM_TAB_KEYS.map((k) => NAV_VISIBLE.find((n) => n.key === k)).filter(Boolean);
+  const moreItems = NAV_VISIBLE.filter((n) => !BOTTOM_TAB_KEYS.includes(n.key));
   const moreActive = moreItems.some((n) => n.key === activeNav);
 
   const select = (key) => {
