@@ -6,21 +6,22 @@ const BASE = "";
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "demo-key-public";
 const requestCache = new Map();
 
-async function apiFetch(path, opts = {}) {
-  // Determine cache duration based on endpoint type
-  let cacheDuration = 5000; // Default 5s
-  if (path.includes('/api/sentiment')) cacheDuration = 300000; // 5m for sentiment
-  else if (path.includes('/api/market-overview')) cacheDuration = 120000; // 2m for market data
-  else if (path.includes('/api/chart/')) cacheDuration = 30000; // 30s for charts
+// The backend runs on a free tier that sleeps after idle; a cold start can take
+// ~30s+ to respond, so the request timeout must be generous and we retry once on
+// network/timeout failures before surfacing an error to the user.
+const REQUEST_TIMEOUT_MS = 45000;
 
-  // Cache GET requests to deduplicate rapid requests
-  const cacheKey = `GET:${path}`;
-  if (!opts.method || opts.method === "GET") {
-    if (requestCache.has(cacheKey)) {
-      return requestCache.get(cacheKey);
-    }
+async function fetchWithTimeout(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
   }
+}
 
+async function doFetch(path, opts) {
   const headers = {
     "Content-Type": "application/json",
     "Authorization": `Bearer ${API_KEY}`,
@@ -28,40 +29,70 @@ async function apiFetch(path, opts = {}) {
   };
 
   const startTime = performance.now();
-  const promise = fetch(`${BASE}${path}`, {
-    headers,
-    ...opts,
-  }).then(async (res) => {
-    const elapsed = performance.now() - startTime;
-    const isChartCall = path.includes('/api/chart/');
-    if (isChartCall) {
-      console.log(`[API] Chart request: ${elapsed.toFixed(1)}ms`);
+  let res;
+  try {
+    res = await fetchWithTimeout(`${BASE}${path}`, { headers, ...opts });
+  } catch (e) {
+    // AbortError (timeout) or network failure — likely a cold/waking backend.
+    throw new Error("Server is waking up — please retry in a moment.");
+  }
+
+  if (path.includes("/api/chart/")) {
+    console.log(`[API] Chart request: ${(performance.now() - startTime).toFixed(1)}ms`);
+  }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    if (res.status === 429) {
+      console.error("Rate limit exceeded:", err);
+      throw new Error("Daily quota exceeded. Please try again tomorrow.");
     }
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-
-      // Handle quota exceeded error
-      if (res.status === 429) {
-        console.error("Rate limit exceeded:", err);
-        throw new Error("Daily quota exceeded. Please try again tomorrow.");
-      }
-
-      // Handle authentication errors
-      if (res.status === 401) {
-        console.error("Authentication failed:", err);
-        throw new Error("Invalid or missing API key");
-      }
-
-      throw new Error(err.detail || `API error: ${res.status}`);
+    if (res.status === 401) {
+      console.error("Authentication failed:", err);
+      throw new Error("Invalid or missing API key");
     }
-    return res.json();
-  });
+    // 502/503/504 from the proxy means the backend is still spinning up.
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      throw new Error("Server is waking up — please retry in a moment.");
+    }
+    throw new Error(err.detail || `API error: ${res.status}`);
+  }
+  return res.json();
+}
 
-  // Cache the promise for GET requests
-  if (!opts.method || opts.method === "GET") {
+async function apiFetch(path, opts = {}) {
+  // Determine cache duration based on endpoint type
+  let cacheDuration = 5000; // Default 5s
+  if (path.includes('/api/sentiment')) cacheDuration = 300000; // 5m for sentiment
+  else if (path.includes('/api/market-overview')) cacheDuration = 120000; // 2m for market data
+  else if (path.includes('/api/chart/')) cacheDuration = 30000; // 30s for charts
+
+  const isGet = !opts.method || opts.method === "GET";
+  const cacheKey = `GET:${path}`;
+  // Cache GET requests to deduplicate rapid in-flight requests
+  if (isGet && requestCache.has(cacheKey)) {
+    return requestCache.get(cacheKey);
+  }
+
+  // Retry once on a cold-start failure (network/timeout/5xx) before giving up.
+  const attempt = async (retriesLeft) => {
+    try {
+      return await doFetch(path, opts);
+    } catch (e) {
+      if (retriesLeft > 0 && /waking up/.test(e.message)) {
+        return attempt(retriesLeft - 1);
+      }
+      throw e;
+    }
+  };
+
+  const promise = attempt(1);
+
+  if (isGet) {
     requestCache.set(cacheKey, promise);
     setTimeout(() => requestCache.delete(cacheKey), cacheDuration);
+    // Never let a rejected promise stay cached — it would poison retries.
+    promise.catch(() => requestCache.delete(cacheKey));
   }
 
   return promise;

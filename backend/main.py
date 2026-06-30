@@ -20,6 +20,30 @@ logger = logging.getLogger(__name__)
 
 VALID_TIMEFRAMES = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d", "3d", "1w"}
 
+# Lightweight in-process response cache. Market data only changes every few
+# seconds, so serving repeat requests from memory cuts Binance load and avoids
+# recomputing indicators for every viewer of the same symbol.
+import time as _time
+
+_response_cache: dict = {}
+
+
+def _cache_get(key: str):
+    entry = _response_cache.get(key)
+    if entry and entry[0] > _time.time():
+        return entry[1]
+    return None
+
+
+def _cache_set(key: str, value, ttl: float):
+    _response_cache[key] = (_time.time() + ttl, value)
+    # Opportunistically evict expired entries so the dict can't grow unbounded.
+    if len(_response_cache) > 500:
+        now = _time.time()
+        for k in [k for k, v in _response_cache.items() if v[0] <= now]:
+            _response_cache.pop(k, None)
+    return value
+
 # API keys (format "key:user,key2:user2"), matching the auth scheme in
 # security.py but without the DB dependency this lightweight service avoids.
 _API_KEYS = {
@@ -74,11 +98,15 @@ async def get_tickers(symbols: str = None):
         sym_list = [s.strip().upper() for s in symbols.split(",")]
     else:
         sym_list = await get_top_volume_pairs(n=20)
+    cache_key = f"tickers:{','.join(sorted(sym_list))}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
     try:
         data = await batch_get_tickers(sym_list)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    return {
+    result = {
         s: {
             "price": float(data[s]["lastPrice"]),
             "change_24h": float(data[s]["priceChangePercent"]),
@@ -89,6 +117,7 @@ async def get_tickers(symbols: str = None):
         for s in sym_list
         if s in data
     }
+    return _cache_set(cache_key, result, ttl=10)
 
 def _safe_val(v, decimals=6):
     if pd.isna(v):
@@ -174,6 +203,10 @@ def detect_elliott_wave(df_reset):
 @app.get("/api/chart/{symbol}")
 async def get_chart(symbol: str, timeframe: str = "15m", limit: int = Query(100, ge=50, le=500)):
     symbol = normalize_symbol(symbol)
+    cache_key = f"chart:{symbol}:{timeframe}:{limit}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
     try:
         df = await get_klines(symbol, timeframe, limit)
     except Exception as e:
@@ -265,7 +298,7 @@ async def get_chart(symbol: str, timeframe: str = "15m", limit: int = Query(100,
         "atr": _safe_val(latest.get("atr")),
     }
 
-    return {
+    result = {
         "symbol": symbol,
         "timeframe": timeframe,
         "bars": bars,
@@ -288,6 +321,7 @@ async def get_chart(symbol: str, timeframe: str = "15m", limit: int = Query(100,
         "elliott_wave_markers": elliott_wave_markers,
         "latest_values": latest_values,
     }
+    return _cache_set(cache_key, result, ttl=15)
 
 @app.get("/api/signal/{symbol}")
 async def get_signal(symbol: str, timeframe: str = "15m"):
