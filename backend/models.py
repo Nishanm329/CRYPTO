@@ -81,6 +81,10 @@ class MarketScanResponse(BaseModel):
     long_count: int
     short_count: int
     scan_duration_ms: float
+    # True when the result set is being computed in the background and the caller
+    # should poll again shortly (cold cache for a large scan). Lets /api/scan return
+    # instantly instead of blocking ~40s, which would exceed the Vercel proxy timeout.
+    warming: bool = False
 
 
 class FearGreedData(BaseModel):

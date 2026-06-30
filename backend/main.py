@@ -9,7 +9,7 @@ import pandas as pd
 from binance_client import get_klines, get_fear_greed_index, get_top_volume_pairs, batch_get_tickers, get_derivatives_data, get_orderbook_imbalance, get_onchain_sentiment, get_onchain_macro, get_derivatives_dashboard, get_liquidation_map
 from indicators import add_all_indicators, calculate_stoch_rsi
 from signals import generate_signal, HTF_MAP, compute_htf_bias
-from scanner import scan_market
+from scanner import scan_market, refresh_scan
 from track_record import seed_if_empty, evaluate_open, get_stats
 import bot_engine
 from backtester import run_backtest
@@ -73,6 +73,29 @@ def normalize_symbol(symbol: str) -> str:
     if not symbol.endswith("USDT"):
         symbol = f"{symbol}USDT"
     return symbol
+
+
+# Background scan warmer. Keeps the default 1h/100-pair scan pre-computed so the
+# Signals view and dashboard load instantly, without pegging the (tiny, free-tier)
+# CPU by warming every timeframe — the rest warm on demand via the warming +
+# stale-while-revalidate path in scan_market.
+WARM_TIMEFRAME = "1h"
+WARM_MAX_PAIRS = 100
+
+
+async def _scan_warmer():
+    await asyncio.sleep(3)  # let startup settle before the first heavy scan
+    while True:
+        try:
+            await refresh_scan(WARM_TIMEFRAME, WARM_MAX_PAIRS)
+        except Exception as e:
+            logger.warning("scan warmer failed: %s", e)
+        await asyncio.sleep(60)
+
+
+@app.on_event("startup")
+async def _start_background_tasks():
+    asyncio.create_task(_scan_warmer())
 
 
 @app.get("/health")

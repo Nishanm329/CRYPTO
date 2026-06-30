@@ -149,18 +149,18 @@ export default function SignalsView({ onSelectSymbol, selectedSymbol, variant = 
   // Adaptive scan parameters based on timeframe for optimization
   const getScanParams = (tf) => {
     const params = {
-      // Pair count capped at 20: Render's free CPU costs ~440ms/pair and the
-      // scan is CPU-bound, so 20 keeps the uncached first load ~11s (and the
-      // 60s server cache makes subsequent loads instant). Bump back up after
-      // a Render CPU upgrade.
-      "1m": { pairs: 20, minConfidence: 50, refresh: 30000 },
-      "5m": { pairs: 20, minConfidence: 45, refresh: 45000 },
-      "15m": { pairs: 20, minConfidence: 42, refresh: 60000 },
-      "1h": { pairs: 20, minConfidence: 40, refresh: 60000 },
-      "4h": { pairs: 20, minConfidence: 38, refresh: 300000 },
-      "1d": { pairs: 20, minConfidence: 35, refresh: 300000 },
-      "3d": { pairs: 20, minConfidence: 35, refresh: 600000 },
-      "1w": { pairs: 20, minConfidence: 35, refresh: 600000 },
+      // Scans 100 pairs. The backend pre-computes the full scan in the background
+      // (default 1h) and serves any confidence filter from one cached result, so
+      // the request returns instantly. A cold cache returns a `warming` flag and
+      // we poll quickly (below) until the background scan completes.
+      "1m": { pairs: 100, minConfidence: 50, refresh: 30000 },
+      "5m": { pairs: 100, minConfidence: 45, refresh: 45000 },
+      "15m": { pairs: 100, minConfidence: 42, refresh: 60000 },
+      "1h": { pairs: 100, minConfidence: 40, refresh: 60000 },
+      "4h": { pairs: 100, minConfidence: 38, refresh: 300000 },
+      "1d": { pairs: 100, minConfidence: 35, refresh: 300000 },
+      "3d": { pairs: 100, minConfidence: 35, refresh: 600000 },
+      "1w": { pairs: 100, minConfidence: 35, refresh: 600000 },
     };
     return params[tf] || params["1h"];
   };
@@ -171,8 +171,16 @@ export default function SignalsView({ onSelectSymbol, selectedSymbol, variant = 
   const { data: scanData, isLoading, mutate } = useSWR(
     `scan-${variant}-${timeframe}-${effectiveMinConf}`,
     () => api.scan(timeframe, scanParams.pairs, effectiveMinConf),
-    { refreshInterval: scanParams.refresh, revalidateOnFocus: false, dedupingInterval: 30000 }
+    {
+      // While the backend is still computing a cold scan, poll fast so results
+      // appear within seconds instead of waiting a full refresh interval.
+      refreshInterval: (latest) => (latest?.warming ? 4000 : scanParams.refresh),
+      revalidateOnFocus: false,
+      dedupingInterval: 30000,
+    }
   );
+
+  const warming = scanData?.warming === true;
 
   const signals = (scanData?.signals ?? [])
     .filter(s => filterDir === "ALL" || s.direction === filterDir)
@@ -260,19 +268,19 @@ export default function SignalsView({ onSelectSymbol, selectedSymbol, variant = 
 
       {/* Grid */}
       <div className="flex-1 overflow-y-auto no-scrollbar p-4">
-        {isLoading && (
+        {(isLoading || warming) && (
           <div className="flex items-center justify-center h-48 gap-2 text-tx-muted">
             <div className="w-5 h-5 border-2 border-brand-blue border-t-transparent rounded-full animate-spin" />
-            <span className="text-sm">Scanning market…</span>
+            <span className="text-sm">{warming ? "Scanning top 100 pairs…" : "Scanning market…"}</span>
           </div>
         )}
-        {!isLoading && signals.length === 0 && (
+        {!isLoading && !warming && signals.length === 0 && (
           <div className="flex flex-col items-center justify-center h-48 text-tx-muted">
             <span className="text-sm">No signals found</span>
             <span className="text-xs mt-1">Try a different timeframe</span>
           </div>
         )}
-        {!isLoading && (
+        {!isLoading && !warming && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
             {signals.map(sig => (
               <SignalCard

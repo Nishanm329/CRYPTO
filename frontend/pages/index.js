@@ -37,8 +37,13 @@ export default function Home() {
 
   const { data: scanData, isLoading: scanLoading, mutate: mutateScan } = useSWR(
     `scan-${timeframe}`,
-    () => api.scan(timeframe, 20, 50), // Reduced from 50 pairs to 20 for faster initial load
-    { refreshInterval: 60000, revalidateOnFocus: false, dedupingInterval: 30000 }
+    () => api.scan(timeframe, 100, 50), // 100 pairs; reuses the backend's pre-warmed scan cache
+    {
+      // Poll fast while the backend is still computing a cold scan (warming flag).
+      refreshInterval: (latest) => (latest?.warming ? 4000 : 60000),
+      revalidateOnFocus: false,
+      dedupingInterval: 30000,
+    }
   );
 
   const { data: signal, isLoading: signalLoading } = useSWR(
