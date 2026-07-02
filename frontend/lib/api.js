@@ -148,6 +148,20 @@ export const api = {
     apiFetch(
       `/api/backtest/walk-forward/${symbol}?timeframe=${timeframe}&years=${years}&n_splits=${nSplits}`
     ),
+
+  // Per-component email digests
+  emailStatus: () => apiFetch("/api/email/status"),
+
+  emailConfig: (component) => apiFetch(`/api/email/config/${component}`),
+
+  saveEmailConfig: (component, config) =>
+    apiFetch(`/api/email/config/${component}`, {
+      method: "PUT",
+      body: JSON.stringify(config),
+    }),
+
+  sendEmailTest: (component) =>
+    apiFetch(`/api/email/test/${component}`, { method: "POST" }),
 };
 
 export function formatPrice(price, symbol = "") {

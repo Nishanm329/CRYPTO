@@ -1,6 +1,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 import { api, formatChange } from "../lib/api";
+import EmailScheduleButton from "./EmailScheduleButton";
 import clsx from "clsx";
 
 const TOP_PAIRS = [
@@ -82,6 +83,7 @@ export default function MarketView({ onSelectSymbol }) {
             <div className="w-1.5 h-1.5 rounded-full bg-brand-green animate-pulse" />
             Live · 15s refresh
           </div>
+          <EmailScheduleButton component="market" />
         </div>
       </div>
 

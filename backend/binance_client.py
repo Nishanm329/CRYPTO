@@ -3,6 +3,8 @@ Binance API client — pulls real market data from public endpoints.
 No API key required for market data.
 """
 import httpx
+import json
+import time
 import asyncio
 from typing import List, Optional
 import pandas as pd
@@ -632,22 +634,37 @@ async def get_onchain_macro(symbol: str) -> Optional[dict]:
         return None
 
 
+# Fear & Greed only updates once a day, so cache it well past any single
+# request cycle instead of hitting alternative.me on every call.
+_fear_greed_cache: Optional[dict] = None
+_fear_greed_ts: float = 0
+_FEAR_GREED_TTL = 900  # 15 minutes
+
+
 async def get_fear_greed_index() -> dict:
     """Fetch the Crypto Fear & Greed Index from alternative.me (free, no key)."""
+    global _fear_greed_cache, _fear_greed_ts
+    if _fear_greed_cache and (time.time() - _fear_greed_ts) < _FEAR_GREED_TTL:
+        return _fear_greed_cache
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{FEAR_GREED_API}?limit=1")
-            data = resp.json()
-            entry = data["data"][0]
-            return {
-                "value": int(entry["value"]),
-                "classification": entry["value_classification"],
-                "timestamp": datetime.fromtimestamp(
-                    int(entry["timestamp"])
-                ).isoformat(),
-            }
+        client = get_http_client()
+        resp = await client.get(f"{FEAR_GREED_API}?limit=1")
+        data = resp.json()
+        entry = data["data"][0]
+        result = {
+            "value": int(entry["value"]),
+            "classification": entry["value_classification"],
+            "timestamp": datetime.fromtimestamp(
+                int(entry["timestamp"])
+            ).isoformat(),
+        }
+        _fear_greed_cache = result
+        _fear_greed_ts = time.time()
+        return result
     except Exception:
-        # Fallback if API is down
+        # Fallback to last good value if we have one, else a neutral default.
+        if _fear_greed_cache:
+            return _fear_greed_cache
         return {
             "value": 50,
             "classification": "Neutral",
@@ -661,14 +678,38 @@ async def get_top_volume_pairs(n: int = 50) -> List[str]:
     return pairs[:n]
 
 
+# Caches the full-market ticker snapshot briefly so several near-simultaneous
+# callers (navbar + active view + scanner, etc.) share one Binance round-trip
+# instead of each re-downloading ~2000 symbols.
+_all_tickers_cache: dict = {}
+_all_tickers_ts: float = 0
+_ALL_TICKERS_TTL = 3  # seconds
+# Binance's ticker/24hr accepts a `symbols` filter; above this size the
+# querystring gets unwieldy so we fall back to the (cached) full snapshot.
+_SYMBOLS_FILTER_MAX = 30
+
+
 async def batch_get_tickers(symbols: List[str]) -> dict:
-    """Fetch ticker data for multiple symbols efficiently."""
-    async with httpx.AsyncClient(timeout=15) as client:
+    """Fetch 24hr ticker data for multiple symbols efficiently."""
+    global _all_tickers_cache, _all_tickers_ts
+    client = get_http_client()
+
+    if len(symbols) <= _SYMBOLS_FILTER_MAX:
+        # Ask Binance for just the symbols we need instead of the whole market.
+        params = {"symbols": json.dumps(list(dict.fromkeys(symbols)))}
+        resp = await client.get(f"{BINANCE_BASE}/api/v3/ticker/24hr", params=params)
+        data = resp.json()
+        if isinstance(data, list):
+            return {t["symbol"]: t for t in data}
+        # Binance returned an error payload (e.g. bad symbol) — fall through
+        # to the full-snapshot path below.
+
+    if (time.time() - _all_tickers_ts) >= _ALL_TICKERS_TTL:
         resp = await client.get(f"{BINANCE_BASE}/api/v3/ticker/24hr")
         all_tickers = resp.json()
-        symbol_set = set(symbols)
-        return {
-            t["symbol"]: t
-            for t in all_tickers
-            if t["symbol"] in symbol_set
-        }
+        if isinstance(all_tickers, list):
+            _all_tickers_cache = {t["symbol"]: t for t in all_tickers}
+            _all_tickers_ts = time.time()
+
+    symbol_set = set(symbols)
+    return {s: t for s, t in _all_tickers_cache.items() if s in symbol_set}

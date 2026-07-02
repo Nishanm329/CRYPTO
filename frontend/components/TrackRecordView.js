@@ -1,6 +1,7 @@
 import useSWR from "swr";
 import clsx from "clsx";
 import { api } from "../lib/api";
+import EmailScheduleButton from "./EmailScheduleButton";
 
 function Stat({ label, value, sub, tone = "default" }) {
   const toneClass =
@@ -73,6 +74,9 @@ export default function TrackRecordView() {
           <span className="text-[11px] px-2 py-0.5 rounded-full bg-brand-blue/15 text-brand-blue font-semibold">
             forward-tested
           </span>
+          <div className="ml-auto">
+            <EmailScheduleButton component="track-record" />
+          </div>
         </div>
         <p className="text-xs text-tx-muted mt-1">
           Every published signal (confidence ≥ 60) is logged at emit time and forward-tested against real

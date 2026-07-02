@@ -4,6 +4,7 @@ from pydantic import BaseModel
 import asyncio
 import logging
 import os
+from typing import Optional
 import pandas as pd
 
 from binance_client import get_klines, get_fear_greed_index, get_top_volume_pairs, batch_get_tickers, get_derivatives_data, get_orderbook_imbalance, get_onchain_sentiment, get_onchain_macro, get_derivatives_dashboard, get_liquidation_map
@@ -11,6 +12,7 @@ from indicators import add_all_indicators, calculate_stoch_rsi
 from signals import generate_signal, HTF_MAP, compute_htf_bias
 from scanner import scan_market, refresh_scan
 from track_record import seed_if_empty, evaluate_open, get_stats
+import email_digest
 import bot_engine
 from backtester import run_backtest
 from combination_backtester import run_combination_backtest, run_walk_forward_backtest
@@ -537,6 +539,67 @@ async def trading_keys_status():
     return {"has_credentials": False}
 
 
+# ── Per-component email digests ──────────────────────────────────────────────
+class EmailConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    recipient: Optional[str] = None
+    frequency: Optional[str] = None
+    filters: Optional[dict] = None
+
+
+@app.get("/api/email/status")
+async def email_status():
+    """Whether SMTP is configured, plus the cadence/component options the UI offers."""
+    return {
+        "smtp_configured": email_digest.smtp_configured(),
+        "components": list(email_digest.COMPONENTS.keys()),
+        "frequencies": list(email_digest.FREQUENCIES.keys()),
+    }
+
+
+@app.get("/api/email/configs")
+async def email_configs():
+    return {"configs": email_digest.list_configs()}
+
+
+@app.get("/api/email/config/{component}")
+async def email_config_get(component: str):
+    if component not in email_digest.COMPONENTS:
+        raise HTTPException(status_code=404, detail=f"Unknown component: {component}")
+    return email_digest.get_config(component)
+
+
+@app.put("/api/email/config/{component}")
+async def email_config_put(component: str, body: EmailConfigUpdate):
+    if component not in email_digest.COMPONENTS:
+        raise HTTPException(status_code=404, detail=f"Unknown component: {component}")
+    try:
+        return email_digest.upsert_config(component, body.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/email/test/{component}")
+async def email_test(component: str):
+    """Build and send this component's digest right now (test / manual send)."""
+    if component not in email_digest.COMPONENTS:
+        raise HTTPException(status_code=404, detail=f"Unknown component: {component}")
+    try:
+        return await email_digest.send_now(component)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # 500 (not 502): the client treats 502/503/504 as a cold-start "waking up"
+        # retry, which would mask the real send error from the user.
+        raise HTTPException(status_code=500, detail=f"Send failed: {e}")
+
+
+@app.post("/api/email/run")
+async def email_run():
+    """Cron entrypoint: send every enabled digest whose cadence has elapsed."""
+    return await email_digest.run_due()
+
+
 @app.get("/api/sentiment")
 async def get_sentiment():
     try:
@@ -574,15 +637,18 @@ async def get_liquidations(symbol: str):
 
 @app.get("/api/market-overview")
 async def get_market_overview():
-    try:
-        ticker_data = await batch_get_tickers(["BTCUSDT", "ETHUSDT"])
-    except Exception as e:
-        logger.error(f"[market-overview] ticker fetch failed: {e}")
+    # These two calls are independent — run them concurrently instead of
+    # waiting on one before starting the other.
+    results = await asyncio.gather(
+        batch_get_tickers(["BTCUSDT", "ETHUSDT"]),
+        get_fear_greed_index(),
+        return_exceptions=True,
+    )
+    ticker_data, fg = results
+    if isinstance(ticker_data, Exception):
+        logger.error(f"[market-overview] ticker fetch failed: {ticker_data}")
         ticker_data = {}
-
-    try:
-        fg = await get_fear_greed_index()
-    except Exception:
+    if isinstance(fg, Exception):
         fg = {"value": 50, "classification": "Neutral"}
 
     btc = ticker_data.get("BTCUSDT", {})

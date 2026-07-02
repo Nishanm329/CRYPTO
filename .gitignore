@@ -45,6 +45,7 @@ out/
 # Runtime bot/track-record stores (local state, not source)
 backend/bots.json
 backend/signal_track.jsonl
+backend/email_configs.json
 
 # Sensitive data
 *.key

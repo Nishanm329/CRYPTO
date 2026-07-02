@@ -2,6 +2,7 @@ import { useState } from "react";
 import useSWR from "swr";
 import { api, formatPrice, formatChange, confidenceColor } from "../lib/api";
 import TradeExecutionModal from "./TradeExecutionModal";
+import EmailScheduleButton from "./EmailScheduleButton";
 import clsx from "clsx";
 
 const TFS = ["1m","5m","15m","1h","4h","1d","3d","1w"];
@@ -251,6 +252,7 @@ export default function SignalsView({ onSelectSymbol, selectedSymbol, variant = 
               <path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
             </svg>
           </button>
+          <EmailScheduleButton component={isScanner ? "scanner" : "signals"} />
         </div>
 
         {/* Timeframe — own full-width scrollable row on mobile so the 8 buttons
