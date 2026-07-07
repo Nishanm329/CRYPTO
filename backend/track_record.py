@@ -151,35 +151,52 @@ def record_signal(signal) -> None:
 def record_bot_trade(bot, closed) -> None:
     """Log a closed paper-trading bot deal into the verified track record.
 
-    Bot deals close in profit (a grid step or DCA take-profit), so their R is
-    expressed relative to the bot's own profit step: 1R == one realised target.
+    Grid/DCA deals close in profit (a grid step or DCA take-profit), so their R
+    is expressed relative to the bot's own profit step: 1R == one realised
+    target. Signal-mode bots already close in true R-multiples (risk-based),
+    so their own result_r/direction/exit_reason are used as-is.
     Records are tagged source="bot" so the UI can distinguish them from signals.
     """
     try:
         cfg = bot.get("config", {})
-        if bot["mode"] == "grid":
-            step_pct = (cfg.get("step", 0) / closed["entry"] * 100) if closed.get("entry") else 0
+        if bot["mode"] == "signal":
+            result_r = closed.get("result_r", 0.0)
+            direction = closed.get("direction", "LONG")
+            exit_reason = closed.get("exit_reason", "signal_exit")
+            stop_loss = closed.get("stop_loss")
+            tp1, tp2, tp3 = closed.get("tp1"), closed.get("tp2"), closed.get("tp3")
+            confidence = closed.get("confidence")
+            ai_probability = closed.get("ai_probability")
         else:
-            step_pct = cfg.get("take_profit_pct", 0)
-        result_r = round(closed["pnl_pct"] / step_pct, 3) if step_pct else 0.0
+            if bot["mode"] == "grid":
+                step_pct = (cfg.get("step", 0) / closed["entry"] * 100) if closed.get("entry") else 0
+            else:
+                step_pct = cfg.get("take_profit_pct", 0)
+            result_r = round(closed["pnl_pct"] / step_pct, 3) if step_pct else 0.0
+            direction = "LONG"
+            exit_reason = closed.get("exit_reason") or f"{bot['mode'].upper()}_TP"
+            stop_loss = None
+            tp1, tp2, tp3 = closed["exit"], None, None
+            confidence = None
+            ai_probability = None
         with _lock:
             records = _load()
             records.append({
                 "id": uuid.uuid4().hex[:12],
                 "symbol": bot["symbol"],
                 "timeframe": bot["timeframe"],
-                "direction": "LONG",
+                "direction": direction,
                 "entry": closed["entry"],
-                "stop_loss": None,
-                "tp1": closed["exit"],
-                "tp2": None,
-                "tp3": None,
-                "confidence": None,
-                "ai_probability": None,
+                "stop_loss": stop_loss,
+                "tp1": tp1,
+                "tp2": tp2,
+                "tp3": tp3,
+                "confidence": confidence,
+                "ai_probability": ai_probability,
                 "created_at": closed["opened_at"],
                 "status": "win" if closed["pnl"] >= 0 else "loss",
                 "result_r": result_r,
-                "exit_reason": f"{bot['mode'].upper()}_TP",
+                "exit_reason": exit_reason,
                 "closed_at": closed["closed_at"],
                 "source": "bot",
             })

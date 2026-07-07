@@ -82,7 +82,7 @@ function TradeRow({ trade, i }) {
 }
 
 export default function BacktestPanel({ symbol, onRunBacktest, result, loading }) {
-  const [timeframe, setTimeframe] = useState("1h");
+  const [timeframe, setTimeframe] = useState("1d");
   const [limit, setLimit] = useState(500);
 
   const tfs = ["15m", "30m", "1h", "4h", "1d"];

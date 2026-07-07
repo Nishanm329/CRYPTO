@@ -47,7 +47,7 @@ function sliceChart(data, count) {
 
 export default function ChartView({ defaultSymbol = "BTCUSDT" }) {
   const [symbol, setSymbol] = useState(defaultSymbol);
-  const [timeframe, setTimeframe] = useState("1h");
+  const [timeframe, setTimeframe] = useState("1d");
   const [query, setQuery] = useState("");
   const [replay, setReplay] = useState(false);
   const [replayIdx, setReplayIdx] = useState(0);

@@ -349,7 +349,7 @@ async def get_chart(symbol: str, timeframe: str = "15m", limit: int = Query(100,
     return _cache_set(cache_key, result, ttl=15)
 
 @app.get("/api/signal/{symbol}")
-async def get_signal(symbol: str, timeframe: str = "15m"):
+async def get_signal(symbol: str, timeframe: str = "1d"):
     symbol = normalize_symbol(symbol)
     htf_tf = HTF_MAP.get(timeframe)
 

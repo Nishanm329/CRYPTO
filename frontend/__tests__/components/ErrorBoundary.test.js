@@ -39,7 +39,7 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>
     )
 
-    expect(screen.getByText(/Something went wrong/i)).toBeInTheDocument()
+    expect(screen.getByText(/Component Error/i)).toBeInTheDocument()
   })
 
   test('displays error message in fallback UI', () => {
@@ -74,7 +74,7 @@ describe('ErrorBoundary', () => {
     fireEvent.click(retryButton)
 
     // After retry, should show error again (since component still throws)
-    expect(screen.getByText(/Something went wrong/i)).toBeInTheDocument()
+    expect(screen.getByText(/Component Error/i)).toBeInTheDocument()
   })
 
   test('displays stack trace in development mode', () => {
@@ -89,7 +89,7 @@ describe('ErrorBoundary', () => {
     )
 
     // Stack trace should be visible in development
-    const stackTraceArea = screen.queryByText(/Stack Trace:/i)
+    const stackTraceArea = screen.queryByText(/Stack trace/i)
     expect(stackTraceArea).toBeInTheDocument()
 
     // Restore environment

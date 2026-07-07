@@ -123,6 +123,15 @@ export default function TradingChart({ chartData, loading, className = "" }) {
   const [hoveredBar, setHoveredBar] = useState(null);
   const [lv, setLv] = useState(null);
   const [activeIndicators, setActiveIndicators] = useState({ ema: true, bb: true, vwap: true, ew: false, rsi: true, macd: true, stoch: true });
+
+  // Default the oscillator sub-panes off on small screens to avoid overwhelming
+  // the viewport on first load. Runs post-mount only, so it can't cause a
+  // server/client hydration mismatch.
+  useEffect(() => {
+    if (window.innerWidth < 640) {
+      setActiveIndicators((p) => ({ ...p, rsi: false, macd: false, stoch: false }));
+    }
+  }, []);
   const [selectedTool, setSelectedTool] = useState(0);
 
   const syncCrosshair = useCallback((src, others, param) => {
@@ -148,12 +157,6 @@ export default function TradingChart({ chartData, loading, className = "" }) {
         const width = mainContainerRef.current?.clientWidth || 0;
         const height = 340;
 
-        if (width === 0) {
-          console.warn('[TradingChart] Container width is 0, will retry on resize');
-        }
-
-        console.log(`[TradingChart] Creating chart with dimensions: ${width}x${height}`);
-
         // ── Main Chart ──
         const mc = createChart(mainContainerRef.current, {
           ...BASE_OPTS,
@@ -170,12 +173,12 @@ export default function TradingChart({ chartData, loading, className = "" }) {
         });
         seriesRef.current.candle = candle;
 
-        seriesRef.current.ema7 = mc.addLineSeries({ color: "#facc15", lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
-        seriesRef.current.ema25 = mc.addLineSeries({ color: "#38bdf8", lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
-        seriesRef.current.bbUpper = mc.addLineSeries({ color: "rgba(100,160,255,0.6)", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
-        seriesRef.current.bbMiddle = mc.addLineSeries({ color: "rgba(100,160,255,0.3)", lineWidth: 1, lineStyle: LineStyle.Dotted, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
-        seriesRef.current.bbLower = mc.addLineSeries({ color: "rgba(100,160,255,0.6)", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
-        seriesRef.current.vwap = mc.addLineSeries({ color: "#c084fc", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
+        seriesRef.current.ema7 = mc.addLineSeries({ color: "#facc15", lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, title: "" });
+        seriesRef.current.ema25 = mc.addLineSeries({ color: "#38bdf8", lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, title: "" });
+        seriesRef.current.bbUpper = mc.addLineSeries({ color: "rgba(100,160,255,0.6)", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, title: "" });
+        seriesRef.current.bbMiddle = mc.addLineSeries({ color: "rgba(100,160,255,0.3)", lineWidth: 1, lineStyle: LineStyle.Dotted, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, title: "" });
+        seriesRef.current.bbLower = mc.addLineSeries({ color: "rgba(100,160,255,0.6)", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, title: "" });
+        seriesRef.current.vwap = mc.addLineSeries({ color: "#c084fc", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, title: "" });
         seriesRef.current.ew = mc.addLineSeries({ color: "#eab308", lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, title: "" });
         seriesRef.current.volume = mc.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol" });
         mc.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
@@ -194,8 +197,8 @@ export default function TradingChart({ chartData, loading, className = "" }) {
         });
         rsiChartRef.current = rc;
         seriesRef.current.rsi = rc.addLineSeries({ color: "#a855f7", lineWidth: 1.2, priceLineVisible: false, title: "" });
-        seriesRef.current.rsiOB = rc.addLineSeries({ color: "rgba(239,68,68,0.35)", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
-        seriesRef.current.rsiOS = rc.addLineSeries({ color: "rgba(0,200,150,0.35)", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
+        seriesRef.current.rsiOB = rc.addLineSeries({ color: "rgba(239,68,68,0.35)", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, title: "" });
+        seriesRef.current.rsiOS = rc.addLineSeries({ color: "rgba(0,200,150,0.35)", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, title: "" });
         rc.subscribeCrosshairMove((p) => syncCrosshair(rc, [mc, macdChartRef.current, stochChartRef.current], p));
 
         // ── MACD Chart ──
@@ -206,9 +209,9 @@ export default function TradingChart({ chartData, loading, className = "" }) {
           timeScale: { ...BASE_OPTS.timeScale, visible: false },
         });
         macdChartRef.current = mcd;
-        seriesRef.current.macdHist = mcd.addHistogramSeries({ priceLineVisible: false, title: "" });
+        seriesRef.current.macdHist = mcd.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false, title: "" });
         seriesRef.current.macdLine = mcd.addLineSeries({ color: "#f97316", lineWidth: 1.2, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
-        seriesRef.current.macdSignal = mcd.addLineSeries({ color: "#3d7fff", lineWidth: 1.2, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
+        seriesRef.current.macdSignal = mcd.addLineSeries({ color: "#3d7fff", lineWidth: 1.2, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, title: "" });
         mcd.subscribeCrosshairMove((p) => syncCrosshair(mcd, [mc, rc, stochChartRef.current], p));
 
         // ── StochRSI Chart ──
@@ -220,7 +223,7 @@ export default function TradingChart({ chartData, loading, className = "" }) {
         });
         stochChartRef.current = sc;
         seriesRef.current.stochK = sc.addLineSeries({ color: "#3d7fff", lineWidth: 1.2, priceLineVisible: false, title: "" });
-        seriesRef.current.stochD = sc.addLineSeries({ color: "#f97316", lineWidth: 1.2, priceLineVisible: false, crosshairMarkerVisible: false, title: "" });
+        seriesRef.current.stochD = sc.addLineSeries({ color: "#f97316", lineWidth: 1.2, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, title: "" });
         sc.subscribeCrosshairMove((p) => syncCrosshair(sc, [mc, rc, mcd], p));
 
         // Resize observer
@@ -237,8 +240,6 @@ export default function TradingChart({ chartData, loading, className = "" }) {
           }
         });
         ro.observe(mainContainerRef.current);
-
-        console.log('[TradingChart] All charts initialized successfully');
 
         // Store cleanup function for when component unmounts
         seriesRef.current.cleanup = () => {
@@ -268,7 +269,6 @@ export default function TradingChart({ chartData, loading, className = "" }) {
   useEffect(() => {
     if (!chartData || !seriesRef.current.candle) return;
     const s = seriesRef.current;
-    const startTime = performance.now();
 
     // Batch all series updates before fitting content
     try {
@@ -303,18 +303,13 @@ export default function TradingChart({ chartData, loading, className = "" }) {
         s.stochD.setData(chartData.stoch_d || []);
       }
 
-      const dataUpdateMs = performance.now() - startTime;
-      console.log(`[TradingChart] Data update took ${dataUpdateMs.toFixed(1)}ms (${chartData.bars?.length || 0} candles)`);
-
       // Defer fitContent() to next frame to batch layout recalculations
       const fitId = requestAnimationFrame(() => {
-        const fitStart = performance.now();
         try {
           mainChartRef.current?.timeScale().fitContent();
           rsiChartRef.current?.timeScale().fitContent();
           macdChartRef.current?.timeScale().fitContent();
           stochChartRef.current?.timeScale().fitContent();
-          console.log(`[TradingChart] fitContent took ${(performance.now() - fitStart).toFixed(1)}ms`);
         } catch (e) {
           console.error('[TradingChart] fitContent error:', e);
         }
@@ -383,7 +378,7 @@ export default function TradingChart({ chartData, loading, className = "" }) {
           </div>
         )}
 
-        <div className="flex items-center gap-3 ml-auto">
+        <div className="flex items-center gap-1.5 ml-auto overflow-x-auto no-scrollbar w-full sm:w-auto">
           {[
             { key: "ema", label: "EMA 7/25" },
             { key: "bb", label: "BB" },
@@ -397,7 +392,7 @@ export default function TradingChart({ chartData, loading, className = "" }) {
               key={key}
               onClick={() => setActiveIndicators((p) => ({ ...p, [key]: !p[key] }))}
               className={clsx(
-                "text-[10px] font-semibold px-1.5 py-0.5 rounded transition-colors",
+                "text-[10px] font-semibold px-2 py-1.5 rounded transition-colors shrink-0 min-h-[28px]",
                 activeIndicators[key] ? "text-brand-blue bg-brand-blue/10" : "text-tx-dim hover:text-tx-muted"
               )}
             >
@@ -434,12 +429,12 @@ export default function TradingChart({ chartData, loading, className = "" }) {
         {/* Chart content */}
         <div className="flex-1 min-w-0 w-full flex flex-col relative overflow-hidden">
           {/* Indicator legend overlay */}
-          <div className="absolute top-1 left-2 z-10 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+          <div className="absolute top-1 left-2 right-14 z-10 flex flex-wrap items-center gap-x-3 gap-y-0.5 pointer-events-none">
             {activeIndicators.ema && (
               <>
                 <LegendChip color="#facc15" label="EMA 7" value={lv?.ema7} />
                 <LegendChip color="#38bdf8" label="EMA 25" value={lv?.ema25} />
-                <span className="flex items-center gap-1 text-[10px] font-mono text-tx-muted">
+                <span className="hidden sm:flex items-center gap-1 text-[10px] font-mono text-tx-muted">
                   <span className="text-brand-green">▲</span>/<span className="text-brand-red">▼</span> cross
                 </span>
               </>
@@ -453,57 +448,51 @@ export default function TradingChart({ chartData, loading, className = "" }) {
           {/* Candlestick chart */}
           <div ref={mainContainerRef} className="w-full flex-1 min-h-0" />
 
-          {/* RSI subchart */}
-          {activeIndicators.rsi && (
-            <div className="border-t border-border shrink-0 h-24">
-              <div className="px-3 pt-1 flex items-center gap-3 text-[10px] text-tx-muted">
-                <span className="text-tx-muted">RSI 14 close</span>
-                {lv?.rsi != null && (
-                  <span className="font-mono font-bold" style={{
-                    color: lv.rsi > 70 ? "#ef4444" : lv.rsi < 30 ? "#00c896" : "#a855f7"
-                  }}>
-                    {lv.rsi.toFixed(2)}
-                  </span>
-                )}
-              </div>
-              <div ref={rsiContainerRef} className="w-full h-20" />
+          {/* RSI subchart — kept mounted (just hidden) so the chart instance never loses its DOM anchor */}
+          <div className={clsx("border-t border-border shrink-0 h-24", !activeIndicators.rsi && "hidden")}>
+            <div className="px-3 pt-1 flex items-center gap-3 text-[10px] text-tx-muted">
+              <span className="text-tx-muted">RSI 14 close</span>
+              {lv?.rsi != null && (
+                <span className="font-mono font-bold" style={{
+                  color: lv.rsi > 70 ? "#ef4444" : lv.rsi < 30 ? "#00c896" : "#a855f7"
+                }}>
+                  {lv.rsi.toFixed(2)}
+                </span>
+              )}
             </div>
-          )}
+            <div ref={rsiContainerRef} className="w-full h-20" />
+          </div>
 
           {/* MACD subchart */}
-          {activeIndicators.macd && (
-            <div className="border-t border-border shrink-0 h-24">
-              <div className="px-3 pt-1 flex items-center gap-3 text-[10px] text-tx-muted">
-                <span>MACD 12 26 close 9</span>
-                {lv?.macd != null && (
-                  <>
-                    <span className="font-mono text-[#f97316]">{lv.macd.toFixed(2)}</span>
-                    <span className="font-mono text-[#3d7fff]">{lv.macd_signal?.toFixed(2)}</span>
-                    <span className="font-mono font-bold" style={{ color: (lv.macd_hist || 0) >= 0 ? "#00c896" : "#ef4444" }}>
-                      {lv.macd_hist?.toFixed(2)}
-                    </span>
-                  </>
-                )}
-              </div>
-              <div ref={macdContainerRef} className="w-full h-20" />
+          <div className={clsx("border-t border-border shrink-0 h-24", !activeIndicators.macd && "hidden")}>
+            <div className="px-3 pt-1 flex items-center gap-3 text-[10px] text-tx-muted">
+              <span>MACD 12 26 close 9</span>
+              {lv?.macd != null && (
+                <>
+                  <span className="font-mono text-[#f97316]">{lv.macd.toFixed(2)}</span>
+                  <span className="font-mono text-[#3d7fff]">{lv.macd_signal?.toFixed(2)}</span>
+                  <span className="font-mono font-bold" style={{ color: (lv.macd_hist || 0) >= 0 ? "#00c896" : "#ef4444" }}>
+                    {lv.macd_hist?.toFixed(2)}
+                  </span>
+                </>
+              )}
             </div>
-          )}
+            <div ref={macdContainerRef} className="w-full h-20" />
+          </div>
 
           {/* StochRSI subchart */}
-          {activeIndicators.stoch && (
-            <div className="border-t border-border shrink-0 h-24">
-              <div className="px-3 pt-1 flex items-center gap-3 text-[10px] text-tx-muted">
-                <span>Stoch RSI 14 14 3 3</span>
-                {lv?.stoch_k != null && (
-                  <>
-                    <span className="font-mono text-[#3d7fff]">{lv.stoch_k.toFixed(2)}</span>
-                    <span className="font-mono text-[#f97316]">{lv.stoch_d?.toFixed(2)}</span>
-                  </>
-                )}
-              </div>
-              <div ref={stochContainerRef} className="w-full h-20" />
+          <div className={clsx("border-t border-border shrink-0 h-24", !activeIndicators.stoch && "hidden")}>
+            <div className="px-3 pt-1 flex items-center gap-3 text-[10px] text-tx-muted">
+              <span>Stoch RSI 14 14 3 3</span>
+              {lv?.stoch_k != null && (
+                <>
+                  <span className="font-mono text-[#3d7fff]">{lv.stoch_k.toFixed(2)}</span>
+                  <span className="font-mono text-[#f97316]">{lv.stoch_d?.toFixed(2)}</span>
+                </>
+              )}
             </div>
-          )}
+            <div ref={stochContainerRef} className="w-full h-20" />
+          </div>
 
           {/* Bottom time range bar */}
           <div className="border-t border-border px-3 py-1.5 flex items-center gap-0.5 shrink-0">

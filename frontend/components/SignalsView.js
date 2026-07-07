@@ -126,22 +126,25 @@ function SignalCard({ sig, selected, onClick, onExecuteTrade }) {
         Execute Trade
       </button>
 
-      {/* Trade Execution Modal */}
-      <TradeExecutionModal
-        signal={showTradeModal ? { ...sig, entry_price: sig.price } : null}
-        onClose={() => setShowTradeModal(false)}
-        onSuccess={() => {
-          setShowTradeModal(false);
-          onExecuteTrade && onExecuteTrade(sig);
-        }}
-      />
+      {/* Trade Execution Modal — only mounted while actually open, so idle
+          signal cards don't each fire a getKeysStatus() network call */}
+      {showTradeModal && (
+        <TradeExecutionModal
+          signal={{ ...sig, entry_price: sig.price }}
+          onClose={() => setShowTradeModal(false)}
+          onSuccess={() => {
+            setShowTradeModal(false);
+            onExecuteTrade && onExecuteTrade(sig);
+          }}
+        />
+      )}
     </div>
   );
 }
 
 export default function SignalsView({ onSelectSymbol, selectedSymbol, variant = "signals" }) {
   const isScanner = variant === "scanner";
-  const [timeframe, setTimeframe] = useState("1h");
+  const [timeframe, setTimeframe] = useState("1d");
   const [filterDir, setFilterDir] = useState("ALL");
   const [sortKey, setSortKey] = useState("confidence");
   // Scanner lets the user set their own confidence floor; null = adaptive default.
@@ -184,6 +187,7 @@ export default function SignalsView({ onSelectSymbol, selectedSymbol, variant = 
   const warming = scanData?.warming === true;
 
   const signals = (scanData?.signals ?? [])
+    .filter(s => s.confidence >= 65)
     .filter(s => filterDir === "ALL" || s.direction === filterDir)
     .sort((a, b) => {
       if (sortKey === "confidence") return b.confidence - a.confidence;

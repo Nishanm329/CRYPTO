@@ -6,7 +6,7 @@ function useSettings() {
   const defaults = {
     refreshInterval: "30",
     defaultSymbol: "BTCUSDT",
-    defaultTimeframe: "1h",
+    defaultTimeframe: "1d",
     minConfidence: "45",
     showVolume: true,
     showBB: true,

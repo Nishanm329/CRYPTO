@@ -6,6 +6,7 @@ import httpx
 import json
 import time
 import asyncio
+import functools
 from typing import List, Optional
 import pandas as pd
 import numpy as np
@@ -13,6 +14,33 @@ from datetime import datetime
 
 BINANCE_BASE = "https://api.binance.com"
 BINANCE_FUTURES = "https://fapi.binance.com"
+
+
+def _ttl_cache(ttl_seconds: float):
+    """Cache an async function's result per argument set for ttl_seconds.
+
+    Used for per-symbol market data (klines, derivatives, order book, etc.)
+    that's fetched fresh from Binance on every /api/signal call today even
+    though it barely changes within a few seconds — this lets repeat lookups
+    for the same symbol (chart + signal panel, re-renders, quick timeframe
+    switches) skip the network round-trip.
+    """
+    def decorator(fn):
+        cache: dict = {}
+
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            key = (args, tuple(sorted(kwargs.items())))
+            now = time.time()
+            cached = cache.get(key)
+            if cached and (now - cached[1]) < ttl_seconds:
+                return cached[0]
+            value = await fn(*args, **kwargs)
+            cache[key] = (value, now)
+            return value
+
+        return wrapper
+    return decorator
 FEAR_GREED_API = "https://api.alternative.me/fng/"
 
 # Stablecoins to filter out (no price movement)
@@ -95,6 +123,7 @@ async def get_all_usdt_pairs(min_volume_usdt: float = 1_000_000) -> List[str]:
     return pairs
 
 
+@_ttl_cache(10)
 async def get_klines(
     symbol: str, interval: str, limit: int = 300
 ) -> pd.DataFrame:
@@ -191,6 +220,7 @@ async def get_ticker_24h(symbol: Optional[str] = None) -> dict:
         return resp.json()
 
 
+@_ttl_cache(30)
 async def get_derivatives_data(symbol: str) -> Optional[dict]:
     """
     Fetch funding rate + open-interest trend from Binance USDⓈ-M perpetual
@@ -204,17 +234,17 @@ async def get_derivatives_data(symbol: str) -> Optional[dict]:
                      means fresh leverage entering (conviction behind the move).
     """
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            pi_resp, oi_resp = await asyncio.gather(
-                client.get(
-                    f"{BINANCE_FUTURES}/fapi/v1/premiumIndex",
-                    params={"symbol": symbol},
-                ),
-                client.get(
-                    f"{BINANCE_FUTURES}/futures/data/openInterestHist",
-                    params={"symbol": symbol, "period": "1h", "limit": 24},
-                ),
-            )
+        client = get_http_client()
+        pi_resp, oi_resp = await asyncio.gather(
+            client.get(
+                f"{BINANCE_FUTURES}/fapi/v1/premiumIndex",
+                params={"symbol": symbol},
+            ),
+            client.get(
+                f"{BINANCE_FUTURES}/futures/data/openInterestHist",
+                params={"symbol": symbol, "period": "1h", "limit": 24},
+            ),
+        )
 
         pi = pi_resp.json()
         if not isinstance(pi, dict) or "lastFundingRate" not in pi:
@@ -234,6 +264,7 @@ async def get_derivatives_data(symbol: str) -> Optional[dict]:
         return None
 
 
+@_ttl_cache(10)
 async def get_orderbook_imbalance(symbol: str, limit: int = 100) -> Optional[dict]:
     """
     Fetch the spot order book and measure bid/ask imbalance in the top `limit`
@@ -241,11 +272,11 @@ async def get_orderbook_imbalance(symbol: str, limit: int = 100) -> Optional[dic
     (more bid liquidity), negative = sell pressure. None on failure.
     """
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                f"{BINANCE_BASE}/api/v3/depth",
-                params={"symbol": symbol, "limit": limit},
-            )
+        client = get_http_client()
+        resp = await client.get(
+            f"{BINANCE_BASE}/api/v3/depth",
+            params={"symbol": symbol, "limit": limit},
+        )
         d = resp.json()
         if not isinstance(d, dict) or "bids" not in d or "asks" not in d:
             return None
@@ -263,6 +294,7 @@ async def get_orderbook_imbalance(symbol: str, limit: int = 100) -> Optional[dic
         return None
 
 
+@_ttl_cache(60)
 async def get_onchain_sentiment(symbol: str) -> Optional[dict]:
     """
     Fetch positioning/flow sentiment from Binance USDⓈ-M futures free data
@@ -279,21 +311,21 @@ async def get_onchain_sentiment(symbol: str) -> Optional[dict]:
                        smart money (contrarian bearish, crowded-long risk).
     """
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            g_resp, t_resp, tk_resp = await asyncio.gather(
-                client.get(
-                    f"{BINANCE_FUTURES}/futures/data/globalLongShortAccountRatio",
-                    params={"symbol": symbol, "period": "1h", "limit": 1},
-                ),
-                client.get(
-                    f"{BINANCE_FUTURES}/futures/data/topLongShortAccountRatio",
-                    params={"symbol": symbol, "period": "1h", "limit": 1},
-                ),
-                client.get(
-                    f"{BINANCE_FUTURES}/futures/data/takerlongshortRatio",
-                    params={"symbol": symbol, "period": "1h", "limit": 1},
-                ),
-            )
+        client = get_http_client()
+        g_resp, t_resp, tk_resp = await asyncio.gather(
+            client.get(
+                f"{BINANCE_FUTURES}/futures/data/globalLongShortAccountRatio",
+                params={"symbol": symbol, "period": "1h", "limit": 1},
+            ),
+            client.get(
+                f"{BINANCE_FUTURES}/futures/data/topLongShortAccountRatio",
+                params={"symbol": symbol, "period": "1h", "limit": 1},
+            ),
+            client.get(
+                f"{BINANCE_FUTURES}/futures/data/takerlongshortRatio",
+                params={"symbol": symbol, "period": "1h", "limit": 1},
+            ),
+        )
 
         def _last_ratio(resp, key):
             data = resp.json()
@@ -562,6 +594,7 @@ async def get_liquidation_map(symbol: str) -> Optional[dict]:
     }
 
 
+@_ttl_cache(1800)
 async def get_onchain_macro(symbol: str) -> Optional[dict]:
     """
     Free on-chain-style macro context computed from Binance daily klines.
@@ -581,11 +614,11 @@ async def get_onchain_macro(symbol: str) -> Optional[dict]:
     Returns None if there isn't enough daily history.
     """
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                f"{BINANCE_BASE}/api/v3/klines",
-                params={"symbol": symbol, "interval": "1d", "limit": 250},
-            )
+        client = get_http_client()
+        resp = await client.get(
+            f"{BINANCE_BASE}/api/v3/klines",
+            params={"symbol": symbol, "interval": "1d", "limit": 250},
+        )
         data = resp.json()
         if not isinstance(data, list) or len(data) < 60:
             return None

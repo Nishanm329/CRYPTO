@@ -28,17 +28,12 @@ async function doFetch(path, opts) {
     ...opts.headers,
   };
 
-  const startTime = performance.now();
   let res;
   try {
     res = await fetchWithTimeout(`${BASE}${path}`, { headers, ...opts });
   } catch (e) {
     // AbortError (timeout) or network failure — likely a cold/waking backend.
     throw new Error("Server is waking up — please retry in a moment.");
-  }
-
-  if (path.includes("/api/chart/")) {
-    console.log(`[API] Chart request: ${(performance.now() - startTime).toFixed(1)}ms`);
   }
 
   if (!res.ok) {
@@ -104,7 +99,7 @@ export const api = {
   scan: (timeframe = "1h", maxPairs = 50, minConfidence = 50) =>
     apiFetch(`/api/scan?timeframe=${timeframe}&max_pairs=${maxPairs}&min_confidence=${minConfidence}`),
 
-  signal: (symbol, timeframe = "1h") =>
+  signal: (symbol, timeframe = "1d") =>
     apiFetch(`/api/signal/${symbol}?timeframe=${timeframe}`),
 
   chart: (symbol, timeframe = "1h", limit = 200) =>

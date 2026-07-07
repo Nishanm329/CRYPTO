@@ -30,7 +30,7 @@ const LiquidationView = dynamic(() => import("../components/LiquidationView"), {
 
 export default function Home() {
   const router = useRouter();
-  const [timeframe, setTimeframe] = useState("1h");
+  const [timeframe, setTimeframe] = useState("1d");
   const [selectedSymbol, setSelectedSymbol] = useState("BTCUSDT");
   const [activeNav, setActiveNav] = useState("dashboard");
   const [showOnboarding, setShowOnboarding] = useState(false);
