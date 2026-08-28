@@ -132,7 +132,12 @@ export default function ChartView({ defaultSymbol = "BTCUSDT" }) {
       {/* Right: chart */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {/* TF bar */}
-        <div className="h-10 shrink-0 border-b border-border flex items-center px-3 lg:px-4 gap-3 lg:gap-4 overflow-x-auto no-scrollbar">
+        <div
+          className="h-10 shrink-0 border-b border-border flex items-center px-3 lg:px-4 gap-3 lg:gap-4 overflow-x-auto no-scrollbar
+            [mask-image:linear-gradient(to_right,black_92%,transparent_100%)]
+            [-webkit-mask-image:linear-gradient(to_right,black_92%,transparent_100%)]
+            lg:[mask-image:none] lg:[-webkit-mask-image:none]"
+        >
           <span className="text-sm font-bold text-tx shrink-0">{symbol.replace("USDT","")}<span className="text-tx-muted font-normal">/USDT</span></span>
           <div className="flex gap-0.5 shrink-0">
             {TFS.map(tf => (

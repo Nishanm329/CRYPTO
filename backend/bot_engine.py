@@ -68,6 +68,11 @@ SIGNAL_DEFAULTS = {
     "position_usd": 100.0,
     "min_confidence": 65,
     "trail_atr_mult": 1.5,   # ATR multiple used for the trailing stop on the TP2+ runner
+    # "notional" — position_usd is the full order value (qty = position_usd / entry).
+    # "risk" — position_usd is the $ risked (1R) if the stop is hit, matching the
+    # Track Record's fixed-position-size semantics (qty = position_usd / stop distance),
+    # so results here line up directly with track_record.get_stats(position_size).
+    "sizing_mode": "notional",
 }
 TP_FRACTIONS = [0.5, 0.25, 0.25]  # of the original position size, closed at TP1/TP2/TP3
 
@@ -133,6 +138,7 @@ async def create_bot(mode: str, symbol: str, timeframe: str, config: dict) -> di
         cfg["position_usd"] = max(1.0, float(cfg["position_usd"]))
         cfg["min_confidence"] = max(0, min(100, int(cfg["min_confidence"])))
         cfg["trail_atr_mult"] = max(0.2, min(10.0, float(cfg["trail_atr_mult"])))
+        cfg["sizing_mode"] = cfg["sizing_mode"] if cfg.get("sizing_mode") in ("notional", "risk") else "notional"
         state = {"position": None, "pending_signal": None}
 
     bot = {
@@ -416,7 +422,13 @@ def _open_signal_position(bot: dict, pending: dict, entry_price: float, ts) -> N
     risk = abs(entry_price - stop_loss)
     if risk <= 0:
         return
-    qty = cfg["position_usd"] / entry_price
+    if cfg.get("sizing_mode") == "risk":
+        # position_usd is $ risked (1R) — size the position so a stop-out loses
+        # exactly that much, regardless of how far away the stop sits.
+        qty = cfg["position_usd"] / risk
+    else:
+        qty = cfg["position_usd"] / entry_price
+    usd_total = qty * entry_price
     position = {
         "direction": direction,
         "entry_price": entry_price,
@@ -427,7 +439,7 @@ def _open_signal_position(bot: dict, pending: dict, entry_price: float, ts) -> N
         "tp_hit": [False, False, False],
         "qty_total": qty,
         "qty_remaining": qty,
-        "usd_total": cfg["position_usd"],
+        "usd_total": usd_total,
         "trailing_active": False,
         "confidence": pending["confidence"],
         "ai_probability": pending["ai_probability"],
@@ -436,7 +448,7 @@ def _open_signal_position(bot: dict, pending: dict, entry_price: float, ts) -> N
     bot["state"]["position"] = position
     bot["fills"].append({
         "time": ts.isoformat(), "side": "BUY" if direction == "LONG" else "SELL_SHORT",
-        "price": round(entry_price, 8), "qty": round(qty, 8), "usd": round(cfg["position_usd"], 2),
+        "price": round(entry_price, 8), "qty": round(qty, 8), "usd": round(usd_total, 2),
     })
 
 

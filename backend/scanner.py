@@ -7,10 +7,25 @@ import time
 from typing import List, Optional
 from datetime import datetime
 
+import pandas as pd
+
 from binance_client import get_top_volume_pairs, get_klines, batch_get_tickers, get_fear_greed_index
 from signals import generate_signal, HTF_MAP, compute_htf_bias
-from models import ScanResult, MarketScanResponse, SignalDirection
+from indicators import (
+    add_all_indicators,
+    add_ema_columns,
+    add_rsi_columns,
+    detect_ema_precross,
+    detect_divergence,
+)
+from models import (
+    ScanResult, MarketScanResponse, SignalDirection, PreCrossAlert, PreCrossScanResponse,
+    DivergenceAlert, DivergenceScanResponse,
+)
 from track_record import record_signal
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 
 # Rate limiting: Binance allows 1200 weight/min for spot. Kline calls are weight
 # 1-2 each, so a 100-pair scan (~200 calls) is still within budget at this concurrency.
@@ -160,4 +175,236 @@ async def scan_market(
     return MarketScanResponse(
         signals=[], total_scanned=0, long_count=0, short_count=0,
         scan_duration_ms=0, warming=True,
+    )
+
+
+# ── EMA pre-cross (convergence) scanning ────────────────────────────────────
+# Mirrors the scan_market cache pattern above, but flags symbols whose EMA
+# 7/25 gap is closing and within threshold_pct — i.e. a cross may be about
+# to happen, not one that already has.
+PRECROSS_CACHE: dict = {}
+PRECROSS_CACHE_TTL = 90
+_precross_inflight: dict = {}
+
+
+async def scan_precross_symbol(
+    symbol: str,
+    timeframe: str,
+    threshold_pct: float,
+    ticker_data: dict,
+) -> Optional[PreCrossAlert]:
+    try:
+        df = await get_klines(symbol, timeframe, limit=200)
+        if len(df) < 50:
+            return None
+        # Only the EMA cross geometry is read below — skip the full indicator
+        # suite (~19x cheaper per symbol across a 100-pair scan).
+        df = add_ema_columns(df)
+        if pd.isna(df["ema7"].iloc[-1]) or pd.isna(df["ema25"].iloc[-1]):
+            return None
+
+        result = detect_ema_precross(df, threshold_pct=threshold_pct)
+        if result is None:
+            return None
+
+        ticker = ticker_data.get(symbol, {})
+        price = float(ticker.get("lastPrice", df["close"].iloc[-1]))
+        change_24h = float(ticker.get("priceChangePercent", 0))
+        volume_24h = float(ticker.get("quoteVolume", 0))
+
+        return PreCrossAlert(
+            symbol=symbol,
+            timeframe=timeframe,
+            direction=SignalDirection(result["direction"]),
+            price=price,
+            spread_pct=result["spread_pct"],
+            threshold_pct=threshold_pct,
+            change_24h=change_24h,
+            volume_24h=volume_24h,
+            timestamp=datetime.utcnow().isoformat(),
+        )
+    except Exception:
+        # One bad symbol must not sink the whole scan, but stay visible:
+        # silently returning None makes a real bug look like "no alerts".
+        logger.warning("pre-cross scan failed for %s (%s)", symbol, timeframe, exc_info=True)
+        return None
+
+
+async def _compute_precross_scan(timeframe: str, max_pairs: int, threshold_pct: float) -> dict:
+    t_start = time.time()
+
+    pairs = await get_top_volume_pairs(max_pairs)
+    ticker_data = await batch_get_tickers(pairs)
+
+    semaphore = asyncio.Semaphore(CONCURRENT_REQUESTS)
+
+    async def bounded_scan(sym):
+        async with semaphore:
+            return await scan_precross_symbol(sym, timeframe, threshold_pct, ticker_data)
+
+    results = await asyncio.gather(*[bounded_scan(s) for s in pairs], return_exceptions=False)
+    alerts = [r for r in results if r is not None]
+    alerts.sort(key=lambda x: x.spread_pct)  # closest to crossing first
+
+    return {
+        "alerts": alerts,
+        "total_scanned": len(pairs),
+        "scan_duration_ms": round((time.time() - t_start) * 1000, 1),
+    }
+
+
+async def refresh_precross_scan(timeframe: str, max_pairs: int, threshold_pct: float) -> dict:
+    key = f"{timeframe}_{max_pairs}_{threshold_pct}"
+    existing = _precross_inflight.get(key)
+    if existing is not None and not existing.done():
+        return await existing
+
+    task = asyncio.ensure_future(_compute_precross_scan(timeframe, max_pairs, threshold_pct))
+    _precross_inflight[key] = task
+    try:
+        data = await task
+        PRECROSS_CACHE[key] = {"ts": time.time(), **data}
+        return data
+    finally:
+        _precross_inflight.pop(key, None)
+
+
+async def scan_precross_market(
+    timeframe: str = "1d",
+    max_pairs: int = 50,
+    threshold_pct: float = 5.0,
+    use_cache: bool = True,
+) -> PreCrossScanResponse:
+    key = f"{timeframe}_{max_pairs}_{threshold_pct}"
+    entry = PRECROSS_CACHE.get(key)
+
+    if use_cache and entry is not None:
+        if time.time() - entry["ts"] >= PRECROSS_CACHE_TTL:
+            asyncio.ensure_future(refresh_precross_scan(timeframe, max_pairs, threshold_pct))
+        return PreCrossScanResponse(
+            alerts=entry["alerts"],
+            total_scanned=entry["total_scanned"],
+            timeframe=timeframe,
+            threshold_pct=threshold_pct,
+            scan_duration_ms=entry.get("scan_duration_ms", 0),
+            warming=False,
+        )
+
+    asyncio.ensure_future(refresh_precross_scan(timeframe, max_pairs, threshold_pct))
+    return PreCrossScanResponse(
+        alerts=[], total_scanned=0, timeframe=timeframe, threshold_pct=threshold_pct,
+        scan_duration_ms=0, warming=True,
+    )
+
+
+# ── RSI/price divergence (standalone alert) ─────────────────────────────────
+# A reversal signal in its own right, not gated on an EMA cross. Uses a short
+# lookback so only recently-confirmed pivots surface (a divergence from deep
+# in the window is stale and no longer actionable).
+DIVERGENCE_CACHE: dict = {}
+DIVERGENCE_CACHE_TTL = 90
+_divergence_inflight: dict = {}
+DIVERGENCE_LOOKBACK = 20
+
+
+async def scan_divergence_symbol(
+    symbol: str,
+    timeframe: str,
+    ticker_data: dict,
+) -> Optional[DivergenceAlert]:
+    try:
+        df = await get_klines(symbol, timeframe, limit=200)
+        if len(df) < 50:
+            return None
+        # detect_divergence reads only close + rsi — skip the full suite.
+        df = add_rsi_columns(df)
+        if pd.isna(df["rsi"].iloc[-1]):
+            return None
+
+        direction, desc = detect_divergence(df, lookback=DIVERGENCE_LOOKBACK)
+        if direction is None:
+            return None
+
+        ticker = ticker_data.get(symbol, {})
+        price = float(ticker.get("lastPrice", df["close"].iloc[-1]))
+        change_24h = float(ticker.get("priceChangePercent", 0))
+        volume_24h = float(ticker.get("quoteVolume", 0))
+
+        return DivergenceAlert(
+            symbol=symbol,
+            timeframe=timeframe,
+            direction=SignalDirection.LONG if direction == "bullish" else SignalDirection.SHORT,
+            price=price,
+            rsi=round(float(df["rsi"].iloc[-1]), 1),
+            description=desc,
+            change_24h=change_24h,
+            volume_24h=volume_24h,
+            timestamp=datetime.utcnow().isoformat(),
+        )
+    except Exception:
+        logger.warning("divergence scan failed for %s (%s)", symbol, timeframe, exc_info=True)
+        return None
+
+
+async def _compute_divergence_scan(timeframe: str, max_pairs: int) -> dict:
+    t_start = time.time()
+
+    pairs = await get_top_volume_pairs(max_pairs)
+    ticker_data = await batch_get_tickers(pairs)
+
+    semaphore = asyncio.Semaphore(CONCURRENT_REQUESTS)
+
+    async def bounded_scan(sym):
+        async with semaphore:
+            return await scan_divergence_symbol(sym, timeframe, ticker_data)
+
+    results = await asyncio.gather(*[bounded_scan(s) for s in pairs], return_exceptions=False)
+    alerts = [r for r in results if r is not None]
+    alerts.sort(key=lambda x: x.volume_24h, reverse=True)
+
+    return {
+        "alerts": alerts,
+        "total_scanned": len(pairs),
+        "scan_duration_ms": round((time.time() - t_start) * 1000, 1),
+    }
+
+
+async def refresh_divergence_scan(timeframe: str, max_pairs: int) -> dict:
+    key = f"{timeframe}_{max_pairs}"
+    existing = _divergence_inflight.get(key)
+    if existing is not None and not existing.done():
+        return await existing
+
+    task = asyncio.ensure_future(_compute_divergence_scan(timeframe, max_pairs))
+    _divergence_inflight[key] = task
+    try:
+        data = await task
+        DIVERGENCE_CACHE[key] = {"ts": time.time(), **data}
+        return data
+    finally:
+        _divergence_inflight.pop(key, None)
+
+
+async def scan_divergence_market(
+    timeframe: str = "1h",
+    max_pairs: int = 50,
+    use_cache: bool = True,
+) -> DivergenceScanResponse:
+    key = f"{timeframe}_{max_pairs}"
+    entry = DIVERGENCE_CACHE.get(key)
+
+    if use_cache and entry is not None:
+        if time.time() - entry["ts"] >= DIVERGENCE_CACHE_TTL:
+            asyncio.ensure_future(refresh_divergence_scan(timeframe, max_pairs))
+        return DivergenceScanResponse(
+            alerts=entry["alerts"],
+            total_scanned=entry["total_scanned"],
+            timeframe=timeframe,
+            scan_duration_ms=entry.get("scan_duration_ms", 0),
+            warming=False,
+        )
+
+    asyncio.ensure_future(refresh_divergence_scan(timeframe, max_pairs))
+    return DivergenceScanResponse(
+        alerts=[], total_scanned=0, timeframe=timeframe, scan_duration_ms=0, warming=True,
     )

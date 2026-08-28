@@ -12,12 +12,29 @@ import os
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from main import app
+# main.py builds its API-key set at import time, so this must be set *before*
+# the import below — not inside a fixture. Pinning it here keeps the suite
+# deterministic regardless of the developer's or CI's real API_KEYS value.
+TEST_API_KEY = "test-suite-key"
+os.environ["API_KEYS"] = f"{TEST_API_KEY}:test-user"
+
+from main import app  # noqa: E402
 
 
 @pytest.fixture
 def client():
-    """FastAPI test client."""
+    """FastAPI test client, authenticated.
+
+    Every /api/* route sits behind require_api_key, so the shared client sends
+    a Bearer token by default. Use `unauthenticated_client` to exercise the
+    rejection path.
+    """
+    return TestClient(app, headers={"Authorization": f"Bearer {TEST_API_KEY}"})
+
+
+@pytest.fixture
+def unauthenticated_client():
+    """Test client with no credentials — for asserting that auth is enforced."""
     return TestClient(app)
 
 

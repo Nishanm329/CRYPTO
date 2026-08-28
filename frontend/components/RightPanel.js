@@ -14,11 +14,52 @@ function SignalRow({ label, value, color }) {
   );
 }
 
+function SignalSkeletonRow() {
+  return (
+    <div className="flex items-center justify-between py-2 border-b border-border/60 last:border-0">
+      <div className="h-2.5 w-16 rounded bg-border animate-pulse" />
+      <div className="h-2.5 w-20 rounded bg-border animate-pulse" />
+    </div>
+  );
+}
+
 function SignalCard({ signal, loading }) {
   if (loading) {
     return (
-      <div className="card flex items-center justify-center h-56">
-        <div className="w-5 h-5 border-2 border-brand-blue border-t-transparent rounded-full animate-spin" />
+      <div className="card">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="h-3.5 w-14 rounded bg-border animate-pulse" />
+          <div className="h-5 w-16 rounded bg-border animate-pulse" />
+        </div>
+
+        {/* Confidence */}
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="h-2.5 w-16 rounded bg-border animate-pulse" />
+            <div className="h-2.5 w-8 rounded bg-border animate-pulse" />
+          </div>
+          <div className="h-2 bg-border rounded-full overflow-hidden">
+            <div className="h-full w-2/3 rounded-full bg-border-light animate-pulse" />
+          </div>
+        </div>
+
+        {/* Price levels */}
+        <div className="space-y-0">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <SignalSkeletonRow key={i} />
+          ))}
+        </div>
+
+        {/* Indicator confirmations */}
+        <div className="mt-4 pt-3 border-t border-border/60">
+          <div className="h-2.5 w-28 rounded bg-border animate-pulse mb-3" />
+          <div className="space-y-0">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <SignalSkeletonRow key={i} />
+            ))}
+          </div>
+        </div>
       </div>
     );
   }

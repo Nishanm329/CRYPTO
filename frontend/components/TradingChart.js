@@ -122,7 +122,7 @@ export default function TradingChart({ chartData, loading, className = "" }) {
 
   const [hoveredBar, setHoveredBar] = useState(null);
   const [lv, setLv] = useState(null);
-  const [activeIndicators, setActiveIndicators] = useState({ ema: true, bb: true, vwap: true, ew: false, rsi: true, macd: true, stoch: true });
+  const [activeIndicators, setActiveIndicators] = useState({ ema: true, bb: true, vwap: true, ew: false, liq: false, rsi: true, macd: true, stoch: true });
 
   // Default the oscillator sub-panes off on small screens to avoid overwhelming
   // the viewport on first load. Runs post-mount only, so it can't cause a
@@ -282,6 +282,27 @@ export default function TradingChart({ chartData, loading, className = "" }) {
       s.vwap.setData(activeIndicators.vwap ? chartData.vwap || [] : []);
       s.ew.setData(activeIndicators.ew ? chartData.elliott_wave || [] : []);
       s.ew.setMarkers(activeIndicators.ew ? chartData.elliott_wave_markers || [] : []);
+
+      // Liquidity map — buy-side (BSL, above price) / sell-side (SSL, below
+      // price) stop clusters, drawn as horizontal price lines on the candles.
+      (s.liquidityLines || []).forEach((l) => { try { s.candle.removePriceLine(l); } catch {} });
+      s.liquidityLines = [];
+      if (activeIndicators.liq && chartData.liquidity) {
+        const { buy_side = [], sell_side = [] } = chartData.liquidity;
+        buy_side.slice(0, 5).forEach((price, i) => {
+          s.liquidityLines.push(s.candle.createPriceLine({
+            price, color: i === 0 ? "#f59e0b" : "rgba(245,158,11,0.35)", lineWidth: i === 0 ? 2 : 1,
+            lineStyle: LineStyle.Dotted, axisLabelVisible: i === 0, title: i === 0 ? "BSL" : "",
+          }));
+        });
+        sell_side.slice(0, 5).forEach((price, i) => {
+          s.liquidityLines.push(s.candle.createPriceLine({
+            price, color: i === 0 ? "#38bdf8" : "rgba(56,189,248,0.35)", lineWidth: i === 0 ? 2 : 1,
+            lineStyle: LineStyle.Dotted, axisLabelVisible: i === 0, title: i === 0 ? "SSL" : "",
+          }));
+        });
+      }
+
       s.volume.setData(chartData.volume || chartData.bars.map((b) => ({
         time: b.time, value: b.volume,
         color: b.close >= b.open ? "rgba(0,200,150,0.35)" : "rgba(239,68,68,0.35)",
@@ -348,6 +369,24 @@ export default function TradingChart({ chartData, loading, className = "" }) {
       s.ew?.setData(activeIndicators.ew ? chartData.elliott_wave || [] : []);
       s.ew?.setMarkers(activeIndicators.ew ? chartData.elliott_wave_markers || [] : []);
 
+      (s.liquidityLines || []).forEach((l) => { try { s.candle?.removePriceLine(l); } catch {} });
+      s.liquidityLines = [];
+      if (activeIndicators.liq && chartData.liquidity && s.candle) {
+        const { buy_side = [], sell_side = [] } = chartData.liquidity;
+        buy_side.slice(0, 5).forEach((price, i) => {
+          s.liquidityLines.push(s.candle.createPriceLine({
+            price, color: i === 0 ? "#f59e0b" : "rgba(245,158,11,0.35)", lineWidth: i === 0 ? 2 : 1,
+            lineStyle: LineStyle.Dotted, axisLabelVisible: i === 0, title: i === 0 ? "BSL" : "",
+          }));
+        });
+        sell_side.slice(0, 5).forEach((price, i) => {
+          s.liquidityLines.push(s.candle.createPriceLine({
+            price, color: i === 0 ? "#38bdf8" : "rgba(56,189,248,0.35)", lineWidth: i === 0 ? 2 : 1,
+            lineStyle: LineStyle.Dotted, axisLabelVisible: i === 0, title: i === 0 ? "SSL" : "",
+          }));
+        });
+      }
+
       // Only fit if indicators changed (not on initial load)
       try {
         mainChartRef.current?.timeScale().fitContent();
@@ -355,7 +394,7 @@ export default function TradingChart({ chartData, loading, className = "" }) {
         if (!e.message.includes('disposed')) console.error('[TradingChart] fitContent error:', e);
       }
     });
-  }, [activeIndicators.ema, activeIndicators.bb, activeIndicators.vwap, activeIndicators.ew]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeIndicators.ema, activeIndicators.bb, activeIndicators.vwap, activeIndicators.ew, activeIndicators.liq]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const bar = hoveredBar;
 
@@ -378,12 +417,18 @@ export default function TradingChart({ chartData, loading, className = "" }) {
           </div>
         )}
 
-        <div className="flex items-center gap-1.5 ml-auto overflow-x-auto no-scrollbar w-full sm:w-auto">
+        <div
+          className="flex items-center gap-1.5 ml-auto overflow-x-auto no-scrollbar w-full sm:w-auto
+            [mask-image:linear-gradient(to_right,black_92%,transparent_100%)]
+            [-webkit-mask-image:linear-gradient(to_right,black_92%,transparent_100%)]
+            sm:[mask-image:none] sm:[-webkit-mask-image:none]"
+        >
           {[
             { key: "ema", label: "EMA 7/25" },
             { key: "bb", label: "BB" },
             { key: "vwap", label: "VWAP" },
             { key: "ew", label: "EW" },
+            { key: "liq", label: "Liquidity" },
             { key: "rsi", label: "RSI" },
             { key: "macd", label: "MACD" },
             { key: "stoch", label: "Stoch" },

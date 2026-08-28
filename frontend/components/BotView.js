@@ -38,7 +38,7 @@ function CreateBot({ defaultSymbol, onCreated }) {
   const [timeframe, setTimeframe] = useState("1d");
   const [grid, setGrid] = useState({ levels: 8, order_size_usd: 100, range_pct: 8 });
   const [dca, setDca] = useState({ base_order_usd: 100, safety_order_usd: 100, max_safety_orders: 5, price_deviation_pct: 2.5, take_profit_pct: 2, stop_loss_pct: 15 });
-  const [signal, setSignal] = useState({ position_usd: 100, min_confidence: 65, trail_atr_mult: 1.5 });
+  const [signal, setSignal] = useState({ position_usd: 100, min_confidence: 65, trail_atr_mult: 1.5, sizing_mode: "notional" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
@@ -49,7 +49,7 @@ function CreateBot({ defaultSymbol, onCreated }) {
         ? { levels: Number(grid.levels), order_size_usd: Number(grid.order_size_usd), range_pct: Number(grid.range_pct) }
         : mode === "dca"
         ? { base_order_usd: Number(dca.base_order_usd), safety_order_usd: Number(dca.safety_order_usd), max_safety_orders: Number(dca.max_safety_orders), price_deviation_pct: Number(dca.price_deviation_pct), take_profit_pct: Number(dca.take_profit_pct), stop_loss_pct: Number(dca.stop_loss_pct) }
-        : { position_usd: Number(signal.position_usd), min_confidence: Number(signal.min_confidence), trail_atr_mult: Number(signal.trail_atr_mult) };
+        : { position_usd: Number(signal.position_usd), min_confidence: Number(signal.min_confidence), trail_atr_mult: Number(signal.trail_atr_mult), sizing_mode: signal.sizing_mode };
       await api.createBot(mode, symbol.toUpperCase(), timeframe, config);
       onCreated();
     } catch (e) {
@@ -65,7 +65,7 @@ function CreateBot({ defaultSymbol, onCreated }) {
       <div className="flex gap-2">
         {["grid", "dca", "signal"].map((m) => (
           <button key={m} onClick={() => setMode(m)}
-            className={clsx("px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors",
+            className={clsx("px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-white/40",
               mode === m ? "bg-brand-blue/15 border-brand-blue text-brand-blue" : "border-border text-tx-muted hover:text-tx")}>
             {m === "grid" ? "Grid" : m === "dca" ? "DCA" : "Signal"}
           </button>
@@ -108,12 +108,35 @@ function CreateBot({ defaultSymbol, onCreated }) {
           </>
         ) : (
           <>
-            <NumField label="Position Size ($)" value={signal.position_usd} onChange={(v) => setSignal({ ...signal, position_usd: v })} />
+            <NumField
+              label={signal.sizing_mode === "risk" ? "Risked $ (1R)" : "Position Size ($)"}
+              value={signal.position_usd}
+              onChange={(v) => setSignal({ ...signal, position_usd: v })}
+            />
             <NumField label="Min Confidence" value={signal.min_confidence} onChange={(v) => setSignal({ ...signal, min_confidence: v })} />
             <NumField label="Trail ATR ×" value={signal.trail_atr_mult} step="0.1" onChange={(v) => setSignal({ ...signal, trail_atr_mult: v })} />
           </>
         )}
       </div>
+      {mode === "signal" && (
+        <div className="flex flex-col gap-1">
+          <span className="text-[11px] text-tx-muted">Sizing Mode</span>
+          <div className="flex gap-2">
+            {[["notional", "Notional $"], ["risk", "Risked $ (1R)"]].map(([v, label]) => (
+              <button key={v} onClick={() => setSignal({ ...signal, sizing_mode: v })}
+                className={clsx("px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-white/40",
+                  signal.sizing_mode === v ? "bg-brand-blue/15 border-brand-blue text-brand-blue" : "border-border text-tx-muted hover:text-tx")}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-tx-muted">
+            {signal.sizing_mode === "risk"
+              ? "Position sized so a stop-out loses exactly this much, regardless of stop distance — matches the Track Record's $-risked-per-trade view."
+              : "Position sized as a flat order value, regardless of stop distance."}
+          </p>
+        </div>
+      )}
       {err && <div className="text-xs text-red-400">{err}</div>}
       <button onClick={submit} disabled={busy}
         className="px-4 py-2 rounded-lg bg-brand-blue text-white text-xs font-semibold hover:bg-blue-600 transition-colors disabled:opacity-50">
@@ -145,6 +168,9 @@ function BotCard({ bot, onChanged }) {
                 <span className={clsx("text-xs ml-2 font-semibold", bot.direction === "LONG" ? "text-emerald-400" : "text-red-400")}>
                   {bot.direction}
                 </span>
+              )}
+              {bot.mode === "signal" && bot.config?.sizing_mode === "risk" && (
+                <span className="text-[10px] ml-2 px-1.5 py-0.5 rounded bg-brand-blue/10 text-brand-blue font-semibold">1R sizing</span>
               )}
             </div>
             <div className="text-[11px] text-tx-muted truncate">

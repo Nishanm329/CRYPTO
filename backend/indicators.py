@@ -244,6 +244,30 @@ def calculate_stoch_rsi(
     return k, d
 
 
+def add_ema_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Add only the EMA 7/25 columns and their spread.
+
+    Cheap counterpart to add_all_indicators for scan paths that just need the
+    cross geometry (detect_ema_cross / detect_ema_precross). The full suite
+    computes ~25 columns — ADX alone runs five ewm passes — which is ~19x the
+    work when all a scan reads is ema7/ema25/ema_spread. Signal *generation*
+    still needs the full suite for its confirmation stack.
+    """
+    df = df.copy()
+    df["ema7"] = calculate_ema(df["close"], 7)
+    df["ema25"] = calculate_ema(df["close"], 25)
+    df["ema_spread"] = (df["ema7"] - df["ema25"]) / df["ema25"] * 100
+    return df
+
+
+def add_rsi_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Add only RSI — for the standalone divergence scan, which reads nothing
+    else. Same rationale as add_ema_columns."""
+    df = df.copy()
+    df["rsi"] = calculate_rsi(df["close"])
+    return df
+
+
 def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """Add all technical indicators to the DataFrame."""
     df = df.copy()
@@ -346,20 +370,159 @@ def detect_ema_cross(df: pd.DataFrame) -> Tuple[Optional[str], int]:
     Returns (direction, candles_since_cross) where direction is 'LONG', 'SHORT', or None.
     candles_since_cross=0 means the cross just happened on the latest candle.
     """
-    ema7 = df["ema7"]
-    ema25 = df["ema25"]
+    # Compare on numpy arrays: pandas scalar .iloc access costs microseconds
+    # each, and this runs per-symbol across a 100-pair scan. Only the last few
+    # bars are ever inspected, so slice the tail once.
+    n = len(df)
+    if n < 2:
+        return None, -1
 
-    # Look back up to 5 candles for a recent cross
-    for i in range(1, min(6, len(df))):
-        idx_now = -i
-        idx_prev = -(i + 1)
+    window = min(6, n)
+    above = (
+        df["ema7"].to_numpy()[-(window + 1):] > df["ema25"].to_numpy()[-(window + 1):]
+    )
 
-        curr_above = ema7.iloc[idx_now] > ema25.iloc[idx_now]
-        prev_above = ema7.iloc[idx_prev] > ema25.iloc[idx_prev]
-
-        if not prev_above and curr_above:
+    # Walk backwards from the latest bar looking for the most recent flip.
+    for i in range(1, window):
+        curr_above = above[-i]
+        prev_above = above[-(i + 1)]
+        if curr_above and not prev_above:
             return "LONG", i - 1
-        elif prev_above and not curr_above:
+        if prev_above and not curr_above:
             return "SHORT", i - 1
 
     return None, -1
+
+
+def detect_candle_confirmation(
+    df: pd.DataFrame, direction: str, candles_since: int = 0
+) -> Tuple[Optional[str], str]:
+    """
+    Check the candle where the EMA cross happened (or the latest candle, if
+    candles_since=0) for a classic reversal candlestick pattern agreeing with
+    the signal direction — a bullish/bearish engulfing body, or a pin bar
+    (small body + long rejection wick). Crosses that land on an indecisive
+    candle are more prone to failing, so this is used as a confirmation
+    filter, not a standalone signal.
+
+    Returns (pattern, description) where pattern is 'engulfing', 'pin_bar', or None.
+    """
+    idx = -(candles_since + 1)
+    if abs(idx) + 1 > len(df):
+        return None, ""
+
+    curr = df.iloc[idx]
+    prev = df.iloc[idx - 1]
+    c_open, c_close, c_high, c_low = curr["open"], curr["close"], curr["high"], curr["low"]
+    p_open, p_close = prev["open"], prev["close"]
+
+    rng = c_high - c_low
+    if rng == 0:
+        return None, ""
+    body = abs(c_close - c_open)
+    is_long = direction == "LONG"
+
+    # Engulfing: current body fully engulfs the prior (opposite-color) body.
+    if is_long and c_close > c_open and p_close < p_open and c_open <= p_close and c_close >= p_open:
+        return "engulfing", "Bullish engulfing candle confirms the cross"
+    if not is_long and c_close < c_open and p_close > p_open and c_open >= p_close and c_close <= p_open:
+        return "engulfing", "Bearish engulfing candle confirms the cross"
+
+    # Pin bar: small body with a long rejection wick opposite the trade side.
+    upper_wick = c_high - max(c_open, c_close)
+    lower_wick = min(c_open, c_close) - c_low
+    small_body = body <= rng * 0.35
+    if is_long and small_body and lower_wick >= rng * 0.5:
+        return "pin_bar", "Long lower wick — rejection of lower prices confirms the long"
+    if not is_long and small_body and upper_wick >= rng * 0.5:
+        return "pin_bar", "Long upper wick — rejection of higher prices confirms the short"
+
+    return None, ""
+
+
+def calculate_keltner_channels(
+    df: pd.DataFrame, period: int = 20, atr_mult: float = 1.5
+) -> Tuple[pd.Series, pd.Series]:
+    basis = calculate_ema(df["close"], period)
+    atr = calculate_atr(df, period)
+    return basis + atr_mult * atr, basis - atr_mult * atr
+
+
+def detect_squeeze_momentum(df: pd.DataFrame, period: int = 20) -> Optional[dict]:
+    """
+    TTM Squeeze: Bollinger Bands compressing inside Keltner Channels marks a
+    volatility contraction ("squeeze") that historically precedes an expansion
+    move. Momentum is the linear-regression value of price vs. its Donchian/SMA
+    midline — its sign gives the likely breakout direction, and a squeeze that
+    just released (was on, now off) is the actionable trigger.
+
+    Returns dict: {"squeeze_on": bool, "just_fired": bool, "momentum": float,
+    "rising": bool} or None if too little data.
+    """
+    if len(df) < period + 2 or "bb_upper" not in df.columns:
+        return None
+
+    kc_upper, kc_lower = calculate_keltner_channels(df, period)
+    bb_upper, bb_lower = df["bb_upper"], df["bb_lower"]
+    squeeze_series = (bb_lower > kc_lower) & (bb_upper < kc_upper)
+    if squeeze_series.iloc[-2:].isna().any():
+        return None
+
+    highest_high = df["high"].rolling(period).max()
+    lowest_low = df["low"].rolling(period).min()
+    sma_close = df["close"].rolling(period).mean()
+    avg = ((highest_high + lowest_low) / 2 + sma_close) / 2
+    value = (df["close"] - avg).tail(period + 1).values
+    if np.isnan(value).any():
+        return None
+
+    x = np.arange(period)
+    slope, intercept = np.polyfit(x, value[1:], 1)
+    momentum = float(slope * (period - 1) + intercept)
+    slope_p, intercept_p = np.polyfit(x, value[:-1], 1)
+    momentum_prev = float(slope_p * (period - 1) + intercept_p)
+
+    squeeze_on = bool(squeeze_series.iloc[-1])
+    just_fired = bool(squeeze_series.iloc[-2] and not squeeze_on)
+
+    return {
+        "squeeze_on": squeeze_on,
+        "just_fired": just_fired,
+        "momentum": round(momentum, 6),
+        "rising": momentum > momentum_prev,
+    }
+
+
+def detect_ema_precross(df: pd.DataFrame, threshold_pct: float = 5.0) -> Optional[dict]:
+    """
+    Detect EMA 7/25 convergence — the gap is closing and within threshold_pct,
+    signalling a cross may be about to happen (before it actually does).
+    Skips symbols that already crossed in the last couple of candles (that's a
+    Signal, not a pre-cross) and skips gaps that are widening rather than closing.
+
+    Returns None, or a dict: {"direction": "LONG"|"SHORT", "spread_pct": float}
+    """
+    if len(df) < 5 or "ema_spread" not in df.columns:
+        return None
+
+    cross_dir, candles_since = detect_ema_cross(df)
+    if cross_dir is not None and candles_since <= 1:
+        return None
+
+    spread = df["ema_spread"]
+    curr = spread.iloc[-1]
+    prev = spread.iloc[-4]
+
+    if pd.isna(curr) or pd.isna(prev):
+        return None
+
+    narrowing = abs(curr) < abs(prev)
+    within_threshold = abs(curr) <= threshold_pct
+
+    if not (narrowing and within_threshold):
+        return None
+
+    # ema7 below ema25 but closing the gap => approaching a bullish cross.
+    direction = "LONG" if curr < 0 else "SHORT"
+
+    return {"direction": direction, "spread_pct": round(abs(curr), 3)}

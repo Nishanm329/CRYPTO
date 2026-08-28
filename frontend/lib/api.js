@@ -99,6 +99,12 @@ export const api = {
   scan: (timeframe = "1h", maxPairs = 50, minConfidence = 50) =>
     apiFetch(`/api/scan?timeframe=${timeframe}&max_pairs=${maxPairs}&min_confidence=${minConfidence}`),
 
+  scanPrecross: (timeframe = "1d", maxPairs = 50, thresholdPct = 5) =>
+    apiFetch(`/api/scan/precross?timeframe=${timeframe}&max_pairs=${maxPairs}&threshold_pct=${thresholdPct}`),
+
+  scanDivergence: (timeframe = "1h", maxPairs = 50) =>
+    apiFetch(`/api/scan/divergence?timeframe=${timeframe}&max_pairs=${maxPairs}`),
+
   signal: (symbol, timeframe = "1d") =>
     apiFetch(`/api/signal/${symbol}?timeframe=${timeframe}`),
 
@@ -121,7 +127,7 @@ export const api = {
 
   liquidations: (symbol) => apiFetch(`/api/liquidations/${symbol}`),
 
-  trackRecord: () => apiFetch("/api/track-record"),
+  trackRecord: (positionSize = 100) => apiFetch(`/api/track-record?position_size=${positionSize}`),
 
   bots: () => apiFetch("/api/bots"),
 

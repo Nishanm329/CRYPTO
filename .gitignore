@@ -52,6 +52,7 @@ backend/email_configs.json
 *.pem
 credentials.json
 secrets.json
+backend/binance_credentials.json
 
 # Coverage
 htmlcov/
@@ -62,3 +63,6 @@ htmlcov/
 Thumbs.db
 .DS_Store
 .vercel
+
+# Downloaded market data for the research harness (regenerable via data_setup.py)
+backend/research/data/

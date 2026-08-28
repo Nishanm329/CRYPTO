@@ -1,59 +1,36 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import clsx from "clsx";
-import { tradingApi, calculatePositionSize } from "../lib/trading-api";
-import { formatPrice } from "../lib/api";
+import { api, formatPrice } from "../lib/api";
 
-export default function TradeExecutionModal({ signal, walletBalance = 10000, onClose, onSuccess }) {
+// Same denominations as the Track Record's "$ risked per trade" selector, so
+// the two features present the identical concept the same way.
+const POSITION_SIZES = [50, 100, 250, 500, 1000];
+
+export default function TradeExecutionModal({ signal, onClose, onSuccess }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [riskPct, setRiskPct] = useState(2);
-  const [tradingMode, setTradingMode] = useState("PAPER");
-  const [loadingSettings, setLoadingSettings] = useState(true);
-
-  useEffect(() => {
-    // Fetch trading settings to determine if PAPER or LIVE mode
-    const fetchTradingSettings = async () => {
-      try {
-        const status = await tradingApi.getKeysStatus();
-        if (status && status.trading_mode) {
-          setTradingMode(status.trading_mode);
-        }
-      } catch (err) {
-        console.warn("Failed to fetch trading mode, defaulting to PAPER:", err);
-        setTradingMode("PAPER");
-      } finally {
-        setLoadingSettings(false);
-      }
-    };
-
-    fetchTradingSettings();
-  }, []);
+  const [positionUsd, setPositionUsd] = useState(100);
 
   if (!signal) return null;
 
   const isLong = signal.direction === "LONG";
-  const positionSize = calculatePositionSize(walletBalance, riskPct, signal.entry_price);
-  const positionValue = positionSize * signal.entry_price;
 
   const handleExecute = async () => {
     setLoading(true);
     setError(null);
     try {
-      const result = await tradingApi.executeTrade(
-        signal.symbol,
-        signal.direction,
-        signal.entry_price,
-        riskPct
-      );
-
-      if (result.error) {
-        setError(result.error);
-      } else {
-        onSuccess && onSuccess(result);
-        onClose();
-      }
+      const result = await api.createBot("signal", signal.symbol, signal.timeframe, {
+        position_usd: positionUsd,
+        // Floor set to this signal's own confidence so the bot is guaranteed to
+        // pick it up on seed (bots replay recent history immediately on
+        // creation), then keeps trading any future setup at least this good.
+        min_confidence: signal.confidence,
+        sizing_mode: "risk",
+      });
+      onSuccess && onSuccess(result);
+      onClose();
     } catch (err) {
-      setError(err.message || "Failed to execute trade");
+      setError(err.message || "Failed to start bot");
     } finally {
       setLoading(false);
     }
@@ -66,19 +43,14 @@ export default function TradeExecutionModal({ signal, walletBalance = 10000, onC
         <div className="flex items-center justify-between mb-6">
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-lg font-bold text-tx">Execute Trade</h2>
-              {tradingMode === "PAPER" && (
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400">
-                  [SIMULATED]
-                </span>
-              )}
-              {tradingMode === "LIVE" && (
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-brand-red/20 text-brand-red">
-                  [LIVE]
-                </span>
-              )}
+              <h2 className="text-lg font-bold text-tx">Start Paper Bot</h2>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400">
+                PAPER
+              </span>
             </div>
-            <p className="text-xs text-tx-muted mt-1">Review and confirm trade details</p>
+            <p className="text-xs text-tx-muted mt-1">
+              Simulated against real price action — no API keys, no live orders
+            </p>
           </div>
           <button
             onClick={onClose}
@@ -92,7 +64,9 @@ export default function TradeExecutionModal({ signal, walletBalance = 10000, onC
         <div className="bg-bg rounded-lg p-4 mb-4 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs text-tx-muted">Symbol</span>
-            <span className="text-sm font-bold text-tx">{signal.symbol}</span>
+            <span className="text-sm font-bold text-tx">
+              {signal.symbol.replace("USDT", "")}<span className="text-tx-muted font-normal">/USDT</span>
+            </span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-xs text-tx-muted">Direction</span>
@@ -117,47 +91,27 @@ export default function TradeExecutionModal({ signal, walletBalance = 10000, onC
           </div>
         </div>
 
-        {/* Risk & Position Size */}
+        {/* Position Size */}
         <div className="bg-bg rounded-lg p-4 mb-4">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-tx">Risk Per Trade</span>
-            <span className="text-sm font-bold text-tx">{riskPct}%</span>
+          <div className="text-xs font-semibold text-tx mb-3">Risked $ per trade (1R)</div>
+          <div className="flex items-center flex-wrap gap-2">
+            {POSITION_SIZES.map((v) => (
+              <button
+                key={v}
+                onClick={() => setPositionUsd(v)}
+                className={clsx(
+                  "text-xs px-2.5 py-1.5 rounded-lg border transition-colors font-semibold",
+                  positionUsd === v
+                    ? "bg-brand-blue/15 border-brand-blue text-brand-blue"
+                    : "border-border text-tx-muted hover:text-tx"
+                )}
+              >
+                ${v}
+              </button>
+            ))}
           </div>
-          <input
-            type="range"
-            min="1"
-            max="5"
-            step="0.5"
-            value={riskPct}
-            onChange={(e) => setRiskPct(parseFloat(e.target.value))}
-            className="w-full h-1.5 bg-border rounded-lg appearance-none cursor-pointer"
-            style={{
-              background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(riskPct / 5) * 100}%, #404040 ${(riskPct / 5) * 100}%, #404040 100%)`
-            }}
-          />
-          <div className="text-xs text-tx-muted mt-2 text-center">
-            {riskPct}% of ${walletBalance.toLocaleString()} = ${(positionValue).toFixed(2)}
-          </div>
-        </div>
-
-        {/* Position Size Calculation */}
-        <div className="border border-border rounded-lg p-4 mb-4 space-y-2">
-          <div className="text-xs font-semibold text-tx mb-3">Position Calculation</div>
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-tx-muted">Wallet Balance</span>
-            <span className="text-tx">${walletBalance.toLocaleString()}</span>
-          </div>
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-tx-muted">Risk Amount ({riskPct}%)</span>
-            <span className="text-tx">${(walletBalance * (riskPct / 100)).toFixed(2)}</span>
-          </div>
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-tx-muted">Entry Price</span>
-            <span className="text-tx">${formatPrice(signal.entry_price)}</span>
-          </div>
-          <div className="border-t border-border pt-2 flex items-center justify-between text-xs font-bold">
-            <span className="text-tx-muted">Quantity to Buy</span>
-            <span className="text-brand-blue">{positionSize.toFixed(8)} {signal.symbol.replace("USDT", "")}</span>
+          <div className="text-xs text-tx-muted mt-3 text-center">
+            A stop-out on this bot loses exactly ${positionUsd}, regardless of stop distance
           </div>
         </div>
 
@@ -204,23 +158,19 @@ export default function TradeExecutionModal({ signal, walletBalance = 10000, onC
           </button>
           <button
             onClick={handleExecute}
-            disabled={loading || positionValue < 10}
+            disabled={loading}
             className={clsx(
               "flex-1 px-4 py-2.5 rounded-lg text-xs font-bold transition-all text-white",
-              positionValue < 10
-                ? "bg-gray-600 cursor-not-allowed opacity-50"
-                : loading
-                ? "bg-brand-blue/70"
-                : "bg-brand-blue hover:bg-blue-500"
+              loading ? "bg-brand-blue/70" : "bg-brand-blue hover:bg-blue-500"
             )}
           >
-            {loading ? "Executing..." : "Execute Trade"}
+            {loading ? "Starting…" : "Start Paper Bot"}
           </button>
         </div>
 
-        {/* Warning */}
+        {/* Info */}
         <p className="text-[10px] text-tx-muted text-center mt-4">
-          ⚠️ Trading involves risk. Start with small amounts. Do not risk capital you cannot afford to lose.
+          This creates a paper-trading bot in the Bots tab that trades this setup and any future signal on {signal.symbol.replace("USDT", "")}/USDT at or above {signal.confidence}% confidence.
         </p>
       </div>
     </div>

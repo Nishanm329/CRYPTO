@@ -8,14 +8,18 @@ from typing import Optional
 import pandas as pd
 
 from binance_client import get_klines, get_fear_greed_index, get_top_volume_pairs, batch_get_tickers, get_derivatives_data, get_orderbook_imbalance, get_onchain_sentiment, get_onchain_macro, get_derivatives_dashboard, get_liquidation_map
-from indicators import add_all_indicators, calculate_stoch_rsi
+from indicators import add_all_indicators, calculate_stoch_rsi, find_liquidity_levels
 from signals import generate_signal, HTF_MAP, compute_htf_bias
-from scanner import scan_market, refresh_scan
+from scanner import scan_market, refresh_scan, scan_precross_market, scan_divergence_market
 from track_record import seed_if_empty, evaluate_open, get_stats
 import email_digest
 import bot_engine
 from backtester import run_backtest
 from combination_backtester import run_combination_backtest, run_walk_forward_backtest
+import binance_credentials
+from crypto_utils import APIKeyVault
+from binance_trade_client import BinanceTradeClient
+from models import APIKeyValidationRequest, APIKeyValidationResponse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -304,6 +308,7 @@ async def get_chart(symbol: str, timeframe: str = "15m", limit: int = Query(100,
             signal_markers.append({"time": ts, "position": "aboveBar", "color": "#ef4444", "shape": "arrowDown"})
 
     elliott_wave, elliott_wave_markers = detect_elliott_wave(df_reset)
+    liquidity = find_liquidity_levels(df)
 
     latest = df_reset.iloc[-1]
     latest_values = {
@@ -345,6 +350,7 @@ async def get_chart(symbol: str, timeframe: str = "15m", limit: int = Query(100,
         "elliott_wave": elliott_wave,
         "elliott_wave_markers": elliott_wave_markers,
         "latest_values": latest_values,
+        "liquidity": liquidity,
     }
     return _cache_set(cache_key, result, ttl=15)
 
@@ -411,6 +417,34 @@ async def scan_signals(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+PRECROSS_TIMEFRAMES = {"1d", "3d", "1w"}
+
+@app.get("/api/scan/precross")
+async def scan_precross(
+    timeframe: str = "1d",
+    max_pairs: int = Query(50, ge=10, le=200),
+    threshold_pct: float = Query(5.0, ge=0.5, le=20.0),
+):
+    """EMA 7/25 convergence scan — flags symbols about to cross, before they do."""
+    if timeframe not in PRECROSS_TIMEFRAMES:
+        raise HTTPException(status_code=400, detail=f"timeframe must be one of {sorted(PRECROSS_TIMEFRAMES)}")
+    try:
+        return await scan_precross_market(timeframe, max_pairs, threshold_pct, use_cache=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/scan/divergence")
+async def scan_divergence(
+    timeframe: str = "1h",
+    max_pairs: int = Query(50, ge=10, le=200),
+):
+    """Standalone RSI/price divergence alerts — a leading reversal signal
+    surfaced on its own, independent of any EMA cross."""
+    try:
+        return await scan_divergence_market(timeframe, max_pairs, use_cache=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/backtest/{symbol}")
 async def backtest(
     symbol: str,
@@ -468,15 +502,17 @@ async def backtest_walk_forward(
 
 
 @app.get("/api/track-record")
-async def track_record():
+async def track_record(position_size: float = Query(100.0, ge=1, le=1_000_000)):
     """Verified, forward-tested performance of published signals.
 
     On first call, seeds from recent history so the record is populated; every
-    call refreshes open positions against fresh price action (throttled)."""
+    call refreshes open positions against fresh price action (throttled).
+    position_size is the fixed $ risked per trade (1R), used to also return a
+    real dollar equity curve alongside the risk-normalized R one."""
     try:
         await seed_if_empty()
         await evaluate_open()
-        return get_stats()
+        return get_stats(position_size)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -532,11 +568,55 @@ async def bots_delete(bot_id: str):
     return {"ok": True}
 
 
+@app.post("/api/trading/validate-keys", response_model=APIKeyValidationResponse)
+async def validate_trading_keys(body: APIKeyValidationRequest):
+    """Test a Binance API key/secret pair against the real account endpoint.
+    Read-only check — does not store anything."""
+    try:
+        client = BinanceTradeClient(body.api_key, body.api_secret)
+        valid = await client.validate_credentials()
+        if not valid:
+            return APIKeyValidationResponse(valid=False, connected=False, error="Invalid API key or secret")
+        try:
+            balance = await client.get_wallet_balance()
+        except Exception:
+            balance = None
+        return APIKeyValidationResponse(valid=True, connected=True, balance_usdt=balance)
+    except Exception as e:
+        return APIKeyValidationResponse(valid=False, connected=False, error=str(e))
+
+
+@app.post("/api/trading/keys/store")
+async def store_trading_keys(body: APIKeyValidationRequest):
+    """Encrypt and persist Binance API credentials. Call validate-keys first —
+    this endpoint stores whatever it's given without re-checking Binance."""
+    try:
+        encrypted = APIKeyVault.store_credentials(user_id="demo-user", api_key=body.api_key, api_secret=body.api_secret)
+        binance_credentials.store_credentials(
+            encrypted["api_key_encrypted"], encrypted["api_secret_encrypted"], encrypted["key_hash"],
+        )
+        binance_credentials.update_validation_status(is_valid=True)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/trading/keys/revoke")
+async def revoke_trading_keys():
+    binance_credentials.delete_credentials()
+    return {"ok": True}
+
+
 @app.get("/api/trading/keys/status")
 async def trading_keys_status():
-    # Live trading is not configured in this deployment; report no stored
-    # credentials so the Settings UI shows the unconfigured state cleanly.
-    return {"has_credentials": False}
+    creds = binance_credentials.get_credentials()
+    if creds is None:
+        return {"has_credentials": False}
+    return {
+        "has_credentials": True,
+        "validation_status": creds.get("validation_status"),
+        "last_validated_at": creds.get("last_validated_at"),
+    }
 
 
 # ── Per-component email digests ──────────────────────────────────────────────

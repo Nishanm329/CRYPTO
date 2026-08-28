@@ -1,0 +1,43 @@
+{
+  "champion": {
+    "variant_id": "H3_volume_confirm",
+    "params": {
+      "fast_ema": "ema7",
+      "slow_ema": "ema25",
+      "atr_mult_sl": 2.0,
+      "rr_target": 2.0,
+      "filters": [
+        "volume_confirm"
+      ]
+    },
+    "validate_expectancy": 0.122,
+    "iteration": 4
+  },
+  "n_variants_tried": 9,
+  "validate": {
+    "trades": 382,
+    "expectancy": 0.122,
+    "win_rate": 42.41,
+    "profit_factor": 1.197,
+    "max_dd": 11.071,
+    "sharpe": 1.358
+  },
+  "holdout": {
+    "trades": 403,
+    "expectancy": 0.0284,
+    "win_rate": 39.21,
+    "profit_factor": 1.044,
+    "max_dd": 24.419,
+    "sharpe": 0.321
+  },
+  "ratio_holdout_to_validate": 0.233,
+  "verdict": "INCONCLUSIVE",
+  "recommendation": "Extend paper trading further before any promotion decision; do not re-loop or re-tune on this holdout.",
+  "monte_carlo_validate_plus_holdout": {
+    "p5_final_r": -9.07,
+    "p50_final_r": 59.3,
+    "p95_final_r": 127.8,
+    "p5_maxdd": 16.89,
+    "p95_maxdd": 54.27
+  }
+}

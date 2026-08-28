@@ -15,6 +15,8 @@ from indicators import (
     calculate_volume_profile,
     detect_divergence,
     find_liquidity_levels,
+    detect_candle_confirmation,
+    detect_squeeze_momentum,
 )
 from models import (
     Signal,
@@ -66,6 +68,8 @@ def build_indicator_confirmations(
     liquidity: Optional[dict] = None,
     onchain: Optional[dict] = None,
     macro: Optional[dict] = None,
+    candle: Optional[tuple] = None,
+    squeeze: Optional[dict] = None,
 ) -> List[IndicatorConfirmation]:
     """Build the list of indicator confirmations for a signal."""
     latest = df.iloc[-1]
@@ -105,6 +109,25 @@ def build_indicator_confirmations(
             description=(
                 f"MACD {'above' if macd_bullish else 'below'} signal line "
                 f"(hist: {macd_hist:+.6f})"
+            ),
+        )
+    )
+
+    # MACD + RSI confluence — both trend-following indicators agreeing on
+    # direction (not just each vs. its own threshold) is a distinct, stronger
+    # confirmation than either alone.
+    rsi_trend_bullish = rsi > 50
+    confluence_ok = (macd_bullish and rsi_trend_bullish) if is_long else (not macd_bullish and not rsi_trend_bullish)
+    confirmations.append(
+        IndicatorConfirmation(
+            name="MACD+RSI Confluence",
+            value=round(rsi, 1),
+            status=_indicator_status(confluence_ok),
+            description=(
+                "MACD and RSI both "
+                + ("bullish" if macd_bullish and rsi_trend_bullish else
+                   "bearish" if not macd_bullish and not rsi_trend_bullish else
+                   "disagree on direction")
             ),
         )
     )
@@ -409,6 +432,43 @@ def build_indicator_confirmations(
         )
     )
 
+    # Candlestick confirmation — engulfing or pin-bar on the crossing candle
+    # agreeing with the trade direction is a distinct, price-action-based
+    # confirmation that the cross isn't landing on an indecisive candle.
+    if candle:
+        pattern, candle_desc = candle
+        confirmations.append(
+            IndicatorConfirmation(
+                name="Candle Confirmation",
+                value=1.0 if pattern else 0.0,
+                status=_indicator_status(bool(pattern)) if pattern else IndicatorStatus.NEUTRAL,
+                description=(candle_desc if pattern else "No confirming candle pattern on the cross"),
+            )
+        )
+
+    # Squeeze Momentum (TTM Squeeze) — a volatility contraction (BB inside KC)
+    # that just released, with momentum agreeing on direction, flags the start
+    # of an expansion move rather than just a lull.
+    if squeeze:
+        mom = squeeze["momentum"]
+        mom_bullish = mom > 0
+        sqz_ok = (mom_bullish if is_long else not mom_bullish) and (squeeze["squeeze_on"] or squeeze["just_fired"])
+        state = (
+            "just fired" if squeeze["just_fired"] else
+            "coiling" if squeeze["squeeze_on"] else "released"
+        )
+        confirmations.append(
+            IndicatorConfirmation(
+                name="Squeeze Momentum",
+                value=round(mom, 6),
+                status=_indicator_status(sqz_ok),
+                description=(
+                    f"Squeeze {state}, momentum {'rising' if squeeze['rising'] else 'falling'} "
+                    f"({'bullish' if mom_bullish else 'bearish'})"
+                ),
+            )
+        )
+
     return confirmations
 
 
@@ -424,6 +484,8 @@ def calculate_confidence(
     liquidity: Optional[dict] = None,
     onchain: Optional[dict] = None,
     macro: Optional[dict] = None,
+    candle: Optional[tuple] = None,
+    squeeze: Optional[dict] = None,
 ) -> int:
     """
     Score the signal 0–100 as a *normalized weighted composite* of every
@@ -459,6 +521,15 @@ def calculate_confidence(
         m = 0.2
     components.append((m, 0.12))
 
+    # NOTE: a "MACD+RSI confluence" component previously lived here (same
+    # agree/disagree logic as the RSI and MACD components above, just voting
+    # a third time on the same two data points). Removed once the Track
+    # Record's by-feature validation showed confirmed trades winning *less*
+    # (43.1% / 0.47R per trade) than unconfirmed ones (47.5% / 0.64R) across
+    # 553 tracked trades — the extra weight was amplifying RSI/MACD noise
+    # rather than adding independent information. The "MACD+RSI Confluence"
+    # indicator card and its by_feature tracking stay, purely as a monitor.
+
     # Volume — participation behind the move
     vr = latest["vol_ratio"]
     v = 1.0 if vr >= 2.0 else 0.8 if vr >= 1.5 else 0.6 if vr >= 1.2 else 0.4 if vr >= 1.0 else 0.25
@@ -485,6 +556,31 @@ def calculate_confidence(
     sp = abs(latest["ema_spread"])
     s = 1.0 if sp > 0.5 else 0.75 if sp > 0.3 else 0.5 if sp > 0.1 else 0.3
     components.append((s, 0.06))
+
+    # Candlestick confirmation — engulfing/pin-bar on the crossing candle
+    # agreeing with direction reduces false-positive crosses on indecisive
+    # candles. Absent pattern is neutral, not penalized, since most crosses
+    # don't land on a textbook candle.
+    if candle:
+        pattern, _ = candle
+        c = 1.0 if pattern else 0.5
+        components.append((c, 0.06))
+
+    # Squeeze Momentum — a fired/coiling squeeze with momentum agreeing on
+    # direction signals a volatility expansion starting in the trade's favor.
+    # No squeeze context is neutral, not penalized (most bars aren't squeezed).
+    if squeeze:
+        mom_bullish = squeeze["momentum"] > 0
+        dir_ok = mom_bullish if is_long else not mom_bullish
+        if squeeze["just_fired"] and dir_ok:
+            sq = 1.0
+        elif squeeze["squeeze_on"] and dir_ok:
+            sq = 0.75
+        elif dir_ok:
+            sq = 0.55
+        else:
+            sq = 0.25
+        components.append((sq, 0.06))
 
     # ADX regime + directional movement
     adx = latest["adx"]
@@ -736,14 +832,17 @@ def generate_signal(
     vol_profile = calculate_volume_profile(df)
     divergence = detect_divergence(df)
     liquidity = find_liquidity_levels(df)
+    candle = detect_candle_confirmation(df, direction, candles_since)
+    squeeze = detect_squeeze_momentum(df)
     indicators = build_indicator_confirmations(
         df, direction, vol_profile, divergence, derivatives, order_book,
-        liquidity, onchain, macro
+        liquidity, onchain, macro, candle, squeeze
     )
     confidence = calculate_confidence(
         df, direction, indicators, vol_profile, htf_bias=htf_bias,
         divergence=divergence, derivatives=derivatives, order_book=order_book,
-        liquidity=liquidity, onchain=onchain, macro=macro,
+        liquidity=liquidity, onchain=onchain, macro=macro, candle=candle,
+        squeeze=squeeze,
     )
     ai_prob = calculate_ai_probability(df, direction)
 

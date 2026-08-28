@@ -108,12 +108,31 @@ def _evaluate_outcome(direction, entry, sl, tp1, tp2, tp3, highs, lows):
 # ---------------------------------------------------------------------------
 # Recording (called from the scanner when a signal is published)
 # ---------------------------------------------------------------------------
+def _feature_flags(signal) -> dict:
+    """Tag which of the newer confirmation features were present/confirming at
+    emit time, so track-record stats can be segmented by feature (does the
+    candle-confirmation / MACD+RSI-confluence filter actually raise win rate,
+    or is it just noise?). Cards use BULLISH="confirms", BEARISH="doesn't
+    confirm", NEUTRAL="not applicable" (see _indicator_status).
+    """
+    by_name = {i.name: i.status.value for i in (signal.indicators or [])}
+    flags = {}
+    if "MACD+RSI Confluence" in by_name:
+        flags["macd_rsi_confluence"] = by_name["MACD+RSI Confluence"] == "BULLISH"
+    if "Candle Confirmation" in by_name:
+        flags["candle_confirmed"] = by_name["Candle Confirmation"] == "BULLISH"
+    if "Squeeze Momentum" in by_name:
+        flags["squeeze_confirmed"] = by_name["Squeeze Momentum"] == "BULLISH"
+    return flags
+
+
 def record_signal(signal) -> None:
     """Append a published signal as an open tracked record (deduplicated)."""
     try:
         if signal is None or signal.confidence < PUBLISH_THRESHOLD:
             return
         tps = {tp.level: tp.price for tp in signal.take_profits}
+        features = _feature_flags(signal)
         with _lock:
             records = _load()
             for r in records:
@@ -142,6 +161,7 @@ def record_signal(signal) -> None:
                 "exit_reason": None,
                 "closed_at": None,
                 "source": "live",
+                "features": features,
             })
             _save(records)
     except Exception:
@@ -349,7 +369,9 @@ async def seed_if_empty() -> None:
 # ---------------------------------------------------------------------------
 # Aggregate stats
 # ---------------------------------------------------------------------------
-def get_stats() -> dict:
+def get_stats(position_size: float = 100.0) -> dict:
+    """position_size is the fixed $ risked per trade (1R), used to translate the
+    R-multiple track record into a real dollar equity curve alongside it."""
     records = _load()
     closed = [r for r in records if r["status"] in ("win", "loss")]
     open_recs = [r for r in records if r["status"] == "open"]
@@ -380,6 +402,19 @@ def get_stats() -> dict:
         peak = max(peak, v)
         max_dd = max(max_dd, peak - v)
 
+    # Same equity curve translated into real dollars, assuming a fixed $ risk
+    # (position_size = 1R) per trade — no compounding, so this is a simple,
+    # conservative view of what following every published signal would have
+    # actually paid out, not just its risk-normalized R.
+    equity_usd, cum_usd = [], 0.0
+    for r in closed_sorted:
+        cum_usd += (r.get("result_r") or 0.0) * position_size
+        equity_usd.append(round(cum_usd, 2))
+    peak_usd, max_dd_usd = 0.0, 0.0
+    for v in equity_usd:
+        peak_usd = max(peak_usd, v)
+        max_dd_usd = max(max_dd_usd, peak_usd - v)
+
     # Breakdown by timeframe and direction
     def _bucket(key):
         out = {}
@@ -399,6 +434,34 @@ def get_stats() -> dict:
             for k, b in sorted(out.items(), key=lambda kv: kv[1]["trades"], reverse=True)
         ]
 
+    # Breakdown by confirmation feature — did signals where a given feature
+    # actively confirmed actually perform better than those where it didn't?
+    # Only live-recorded trades carry "features" tags (seed/bot trades predate
+    # or bypass the full indicator pipeline), so those are simply excluded.
+    def _feature_bucket(feature_key):
+        tagged = [r for r in closed if feature_key in (r.get("features") or {})]
+        out = []
+        for label, val in (("Confirmed", True), ("Not Confirmed", False)):
+            group = [r for r in tagged if r["features"][feature_key] == val]
+            if not group:
+                continue
+            wins_g = sum(1 for r in group if r["status"] == "win")
+            total_r_g = sum(r.get("result_r") or 0.0 for r in group)
+            out.append({
+                "key": label,
+                "trades": len(group),
+                "win_rate": round(wins_g / len(group) * 100, 1),
+                "total_r": round(total_r_g, 2),
+            })
+        return out
+
+    by_feature = {
+        "macd_rsi_confluence": _feature_bucket("macd_rsi_confluence"),
+        "candle_confirmed": _feature_bucket("candle_confirmed"),
+        "squeeze_confirmed": _feature_bucket("squeeze_confirmed"),
+    }
+    by_feature = {k: v for k, v in by_feature.items() if v}
+
     recent = sorted(closed, key=lambda r: r.get("closed_at") or "", reverse=True)[:25]
 
     return {
@@ -416,8 +479,15 @@ def get_stats() -> dict:
         "best_r": round(max(rs), 2) if rs else 0.0,
         "worst_r": round(min(rs), 2) if rs else 0.0,
         "equity_curve": equity,
+        "position_size": position_size,
+        "total_pnl_usd": round(cum_usd, 2),
+        "max_drawdown_usd": round(max_dd_usd, 2),
+        "best_usd": round(max(rs) * position_size, 2) if rs else 0.0,
+        "worst_usd": round(min(rs) * position_size, 2) if rs else 0.0,
+        "equity_curve_usd": equity_usd,
         "by_timeframe": _bucket("timeframe"),
         "by_direction": _bucket("direction"),
+        "by_feature": by_feature,
         "recent_trades": [
             {
                 "symbol": r["symbol"],

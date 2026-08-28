@@ -87,6 +87,50 @@ class MarketScanResponse(BaseModel):
     warming: bool = False
 
 
+class PreCrossAlert(BaseModel):
+    """EMA 7/25 convergence alert — the gap is closing and may cross soon."""
+    symbol: str
+    timeframe: str
+    direction: SignalDirection
+    price: float
+    spread_pct: float  # current |ema7-ema25|/ema25 %, i.e. how close to crossing
+    threshold_pct: float
+    change_24h: float
+    volume_24h: float
+    timestamp: str
+
+
+class PreCrossScanResponse(BaseModel):
+    alerts: List[PreCrossAlert]
+    total_scanned: int
+    timeframe: str
+    threshold_pct: float
+    scan_duration_ms: float
+    warming: bool = False
+
+
+class DivergenceAlert(BaseModel):
+    """Standalone RSI/price divergence alert — a leading reversal signal on its
+    own, surfaced independent of any EMA cross."""
+    symbol: str
+    timeframe: str
+    direction: SignalDirection  # LONG for bullish divergence, SHORT for bearish
+    price: float
+    rsi: float
+    description: str
+    change_24h: float
+    volume_24h: float
+    timestamp: str
+
+
+class DivergenceScanResponse(BaseModel):
+    alerts: List[DivergenceAlert]
+    total_scanned: int
+    timeframe: str
+    scan_duration_ms: float
+    warming: bool = False
+
+
 class FearGreedData(BaseModel):
     value: int
     classification: str
@@ -188,6 +232,8 @@ class ChartDataResponse(BaseModel):
     signals: List[Dict[str, Any]]
     # Latest snapshot for legend overlay
     latest_values: Dict[str, Any] = {}
+    # Liquidity pools (buy-side/sell-side stop clusters) for the map overlay
+    liquidity: Optional[Dict[str, Any]] = None
 
 
 # ============================================================================

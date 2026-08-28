@@ -1,7 +1,11 @@
+import { useState } from "react";
 import useSWR from "swr";
 import clsx from "clsx";
 import { api } from "../lib/api";
 import EmailScheduleButton from "./EmailScheduleButton";
+
+const POSITION_SIZES = [50, 100, 250, 500, 1000];
+const fmtUsd = (v) => `${v < 0 ? "-" : ""}$${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
 function Stat({ label, value, sub, tone = "default" }) {
   const toneClass =
@@ -40,12 +44,22 @@ function EquityCurve({ points }) {
 
 const dirClass = (d) => (d === "LONG" ? "text-emerald-400" : "text-red-400");
 const rClass = (r) => (r > 0 ? "text-emerald-400" : r < 0 ? "text-red-400" : "text-tx-muted");
+const FEATURE_LABELS = {
+  macd_rsi_confluence: "MACD+RSI Confluence",
+  candle_confirmed: "Candle Confirmation",
+  squeeze_confirmed: "Squeeze Momentum",
+};
 
 export default function TrackRecordView() {
-  const { data, error, isLoading } = useSWR("track-record", () => api.trackRecord(), {
-    refreshInterval: 60000,
-    revalidateOnFocus: false,
-  });
+  const [positionSize, setPositionSize] = useState(100);
+  const { data, error, isLoading } = useSWR(
+    `track-record-${positionSize}`,
+    () => api.trackRecord(positionSize),
+    {
+      refreshInterval: 60000,
+      revalidateOnFocus: false,
+    }
+  );
 
   if (isLoading) {
     return (
@@ -82,6 +96,23 @@ export default function TrackRecordView() {
           Every published signal (confidence ≥ 60) is logged at emit time and forward-tested against real
           candles to a resolved win/loss. No cherry-picking — these are the actual outcomes.
         </p>
+        <div className="flex items-center flex-wrap gap-2 mt-3">
+          <span className="text-[11px] text-tx-muted whitespace-nowrap shrink-0">$ risked per trade</span>
+          {POSITION_SIZES.map((v) => (
+            <button
+              key={v}
+              onClick={() => setPositionSize(v)}
+              className={clsx(
+                "text-xs px-2.5 py-1 rounded-lg border transition-colors",
+                positionSize === v
+                  ? "bg-brand-blue/15 border-brand-blue/40 text-brand-blue font-semibold"
+                  : "border-border text-tx-muted hover:text-tx"
+              )}
+            >
+              ${v}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -101,6 +132,24 @@ export default function TrackRecordView() {
       <div className="bg-bg-card border border-border rounded-xl p-4">
         <div className="text-xs font-semibold text-tx mb-2">Equity Curve (cumulative R)</div>
         <EquityCurve points={s.equity_curve} />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Stat
+          label={`P&L @ $${positionSize}/trade`}
+          value={fmtUsd(s.total_pnl_usd ?? 0)}
+          tone={(s.total_pnl_usd ?? 0) >= 0 ? "gold" : "neg"}
+        />
+        <Stat label="Max Drawdown" value={`-${fmtUsd(s.max_drawdown_usd ?? 0)}`} tone="neg" />
+        <Stat label="Best Trade" value={fmtUsd(s.best_usd ?? 0)} tone="pos" />
+        <Stat label="Worst Trade" value={fmtUsd(s.worst_usd ?? 0)} tone="neg" />
+      </div>
+
+      <div className="bg-bg-card border border-border rounded-xl p-4">
+        <div className="text-xs font-semibold text-tx mb-2">
+          Equity Curve — fixed ${positionSize} risked per trade, no compounding
+        </div>
+        <EquityCurve points={s.equity_curve_usd} />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -133,6 +182,32 @@ export default function TrackRecordView() {
           </div>
         </div>
       </div>
+
+      {s.by_feature && Object.keys(s.by_feature).length > 0 && (
+        <div className="bg-bg-card border border-border rounded-xl p-4">
+          <div className="text-xs font-semibold text-tx mb-1">By Feature</div>
+          <p className="text-[11px] text-tx-muted mb-2">
+            Does a confirmation feature actually raise win rate, or is it just noise?
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {Object.entries(s.by_feature).map(([key, rows]) => (
+              <div key={key}>
+                <div className="text-[11px] font-semibold text-tx-muted mb-1">{FEATURE_LABELS[key] || key}</div>
+                <div className="space-y-1.5">
+                  {rows.map((b) => (
+                    <div key={b.key} className="flex items-center justify-between text-xs">
+                      <span className="text-tx font-medium">{b.key}</span>
+                      <span className="text-tx-muted">{b.trades} trades</span>
+                      <span className={clsx("font-semibold", b.win_rate >= 50 ? "text-emerald-400" : "text-red-400")}>{b.win_rate}%</span>
+                      <span className={clsx("font-semibold w-16 text-right", rClass(b.total_r))}>{b.total_r >= 0 ? "+" : ""}{b.total_r}R</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="bg-bg-card border border-border rounded-xl overflow-hidden">
         <div className="px-4 py-3 text-xs font-semibold text-tx border-b border-border">Recent Resolved Trades</div>

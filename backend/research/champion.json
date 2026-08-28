@@ -1,0 +1,14 @@
+{
+  "variant_id": "H3_volume_confirm",
+  "params": {
+    "fast_ema": "ema7",
+    "slow_ema": "ema25",
+    "atr_mult_sl": 2.0,
+    "rr_target": 2.0,
+    "filters": [
+      "volume_confirm"
+    ]
+  },
+  "validate_expectancy": 0.122,
+  "iteration": 4
+}
