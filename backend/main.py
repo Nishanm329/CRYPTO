@@ -4,6 +4,7 @@ from pydantic import BaseModel
 import asyncio
 import logging
 import os
+import secrets
 from typing import Optional
 import pandas as pd
 
@@ -70,8 +71,28 @@ def require_api_key(request: Request):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
+_ADMIN_KEY = os.getenv("ADMIN_API_KEY", "")
+_LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+
+def require_admin(request: Request):
+    """Guard for routes that store exchange credentials or control who gets
+    emailed. The public Bearer key ships inside the frontend bundle, so it can't
+    protect these. With ADMIN_API_KEY set, callers must send a matching
+    X-Admin-Key header; with it unset, only loopback (local dev) is allowed."""
+    if _ADMIN_KEY:
+        if secrets.compare_digest(request.headers.get("x-admin-key", ""), _ADMIN_KEY):
+            return
+    elif request.client and request.client.host in _LOOPBACK:
+        return
+    raise HTTPException(status_code=403, detail="Admin key required (set ADMIN_API_KEY on the server and send X-Admin-Key).")
+
+
 app = FastAPI(title="CryptoSignal AI", version="2.0.0", dependencies=[Depends(require_api_key)])
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+# The browser only talks to its own origin through the Next.js rewrite proxy, so
+# CORS only matters for direct access; pin it instead of allowing every site.
+_ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3002,http://localhost:3000").split(",") if o.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=_ALLOWED_ORIGINS, allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
 
 def normalize_symbol(symbol: str) -> str:
@@ -574,7 +595,7 @@ async def bots_list():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/bots")
+@app.post("/api/bots", dependencies=[Depends(require_admin)])
 async def bots_create(body: BotCreate):
     if body.timeframe not in VALID_TIMEFRAMES:
         raise HTTPException(status_code=400, detail="Invalid timeframe")
@@ -587,28 +608,28 @@ async def bots_create(body: BotCreate):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/bots/{bot_id}/stop")
+@app.post("/api/bots/{bot_id}/stop", dependencies=[Depends(require_admin)])
 async def bots_stop(bot_id: str):
     if not bot_engine.stop_bot(bot_id):
         raise HTTPException(status_code=404, detail="Bot not found")
     return {"ok": True}
 
 
-@app.post("/api/bots/{bot_id}/start")
+@app.post("/api/bots/{bot_id}/start", dependencies=[Depends(require_admin)])
 async def bots_start(bot_id: str):
     if not bot_engine.start_bot(bot_id):
         raise HTTPException(status_code=404, detail="Bot not found")
     return {"ok": True}
 
 
-@app.delete("/api/bots/{bot_id}")
+@app.delete("/api/bots/{bot_id}", dependencies=[Depends(require_admin)])
 async def bots_delete(bot_id: str):
     if not bot_engine.delete_bot(bot_id):
         raise HTTPException(status_code=404, detail="Bot not found")
     return {"ok": True}
 
 
-@app.post("/api/trading/validate-keys", response_model=APIKeyValidationResponse)
+@app.post("/api/trading/validate-keys", response_model=APIKeyValidationResponse, dependencies=[Depends(require_admin)])
 async def validate_trading_keys(body: APIKeyValidationRequest):
     """Test a Binance API key/secret pair against the real account endpoint.
     Read-only check — does not store anything."""
@@ -626,7 +647,7 @@ async def validate_trading_keys(body: APIKeyValidationRequest):
         return APIKeyValidationResponse(valid=False, connected=False, error=str(e))
 
 
-@app.post("/api/trading/keys/store")
+@app.post("/api/trading/keys/store", dependencies=[Depends(require_admin)])
 async def store_trading_keys(body: APIKeyValidationRequest):
     """Encrypt and persist Binance API credentials. Call validate-keys first —
     this endpoint stores whatever it's given without re-checking Binance."""
@@ -641,7 +662,7 @@ async def store_trading_keys(body: APIKeyValidationRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/trading/keys/revoke")
+@app.post("/api/trading/keys/revoke", dependencies=[Depends(require_admin)])
 async def revoke_trading_keys():
     binance_credentials.delete_credentials()
     return {"ok": True}
@@ -689,7 +710,7 @@ async def email_config_get(component: str):
     return email_digest.get_config(component)
 
 
-@app.put("/api/email/config/{component}")
+@app.put("/api/email/config/{component}", dependencies=[Depends(require_admin)])
 async def email_config_put(component: str, body: EmailConfigUpdate):
     if component not in email_digest.COMPONENTS:
         raise HTTPException(status_code=404, detail=f"Unknown component: {component}")
@@ -699,7 +720,7 @@ async def email_config_put(component: str, body: EmailConfigUpdate):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.post("/api/email/test/{component}")
+@app.post("/api/email/test/{component}", dependencies=[Depends(require_admin)])
 async def email_test(component: str):
     """Build and send this component's digest right now (test / manual send)."""
     if component not in email_digest.COMPONENTS:

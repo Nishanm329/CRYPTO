@@ -22,9 +22,14 @@ async function fetchWithTimeout(url, options) {
 }
 
 async function doFetch(path, opts) {
+  // Admin-only routes (bots, exchange keys, email schedule) need a key that is
+  // never bundled: the owner stores it once via localStorage.setItem("adminKey", …).
+  let adminKey = "";
+  try { adminKey = localStorage.getItem("adminKey") || ""; } catch {}
   const headers = {
     "Content-Type": "application/json",
     "Authorization": `Bearer ${API_KEY}`,
+    ...(adminKey ? { "X-Admin-Key": adminKey } : {}),
     ...opts.headers,
   };
 
