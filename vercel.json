@@ -5,7 +5,7 @@
   "installCommand": "npm install --prefix frontend",
   "framework": "nextjs",
   "env": {
-    "NEXT_PUBLIC_API_URL": "https://crypto-signals-api.vercel.app",
+    "NEXT_PUBLIC_API_URL": "https://crypto-signals-backend.onrender.com",
     "NEXT_PUBLIC_ENVIRONMENT": "production"
   },
   "regions": ["sfo1"],

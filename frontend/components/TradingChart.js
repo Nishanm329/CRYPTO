@@ -122,6 +122,7 @@ export default function TradingChart({ chartData, loading, className = "" }) {
 
   const [hoveredBar, setHoveredBar] = useState(null);
   const [lv, setLv] = useState(null);
+  const [chartReady, setChartReady] = useState(false);
   const [activeIndicators, setActiveIndicators] = useState({ ema: true, bb: true, vwap: true, ew: false, liq: false, rsi: true, macd: true, stoch: true });
 
   // Default the oscillator sub-panes off on small screens to avoid overwhelming
@@ -241,6 +242,11 @@ export default function TradingChart({ chartData, loading, className = "" }) {
         });
         ro.observe(mainContainerRef.current);
 
+        // Data may already have resolved before this deferred setup ran (fast
+        // localhost fetches can beat the requestAnimationFrame); flip this so
+        // the data-population effect below re-checks instead of staying blank.
+        setChartReady(true);
+
         // Store cleanup function for when component unmounts
         seriesRef.current.cleanup = () => {
           try {
@@ -267,7 +273,7 @@ export default function TradingChart({ chartData, loading, className = "" }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!chartData || !seriesRef.current.candle) return;
+    if (!chartData || !chartReady || !seriesRef.current.candle) return;
     const s = seriesRef.current;
 
     // Batch all series updates before fitting content
@@ -342,7 +348,7 @@ export default function TradingChart({ chartData, loading, className = "" }) {
     } catch (error) {
       console.error('[TradingChart] Data update error:', error);
     }
-  }, [chartData]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [chartData, chartReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!chartData || !seriesRef.current) return;

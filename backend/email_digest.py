@@ -18,7 +18,7 @@ import threading
 from email.message import EmailMessage
 from datetime import datetime, timezone
 
-from scanner import scan_market
+from scanner import scan_market, refresh_scan, _build_response
 from track_record import get_stats
 from binance_client import get_top_volume_pairs, batch_get_tickers
 
@@ -41,6 +41,7 @@ COMPONENTS = {
     "scanner": {"timeframe": "1h", "min_confidence": 55, "direction": "ALL", "top_n": 15},
     "track-record": {},
     "market": {"top_n": 12},
+    "top-calls": {"min_confidence": 65, "top_n": 3},
 }
 
 # Cadence label -> seconds. A digest fires when (now - last_sent) >= its interval.
@@ -297,11 +298,77 @@ async def _build_market(cfg: dict):
     return subject, _wrap("Market Overview", table)
 
 
+TOP_CALLS_TFS = ["1d", "3d", "1w"]
+TOP_CALLS_LABELS = {"1d": "1-Day", "3d": "3-Day", "1w": "1-Week"}
+
+
+def _call_rationale(s) -> str:
+    """A short, data-grounded write-up for one call. Only cites numbers actually
+    on the ScanResult (confidence, AI probability, R:R, 24h change/volume) —
+    no indicator claims are made here since scan results don't carry per-signal
+    indicator confirmations (see SignalCard's own fallback tags for the same reason)."""
+    d = s.direction.value if hasattr(s.direction, "value") else s.direction
+    bias = "bullish" if d == "LONG" else "bearish"
+    conf_word = "High" if s.confidence >= 75 else "Moderate" if s.confidence >= 60 else "Modest"
+    momentum_aligned = (s.change_24h >= 0) == (d == "LONG")
+    momentum = "in line with" if momentum_aligned else "counter to"
+    return (
+        f"{conf_word}-confidence {bias} setup at {s.confidence}% confidence "
+        f"(model assigns a {round(s.ai_probability * 100)}% probability to this playing out), "
+        f"with a {s.rr_ratio:.1f}:1 reward-to-risk. 24h price action ({s.change_24h:+.2f}%) is "
+        f"{momentum} the call, on ${s.volume_24h:,.0f} volume."
+    )
+
+
+async def _build_top_calls(cfg: dict):
+    f = cfg["filters"]
+    min_conf = int(f.get("min_confidence", 65))
+    top_n = int(f.get("top_n", 3))
+
+    sections = ""
+    total_calls = 0
+    for tf in TOP_CALLS_TFS:
+        # Await the scan directly rather than the cache-first scan_market() —
+        # this runs on an internal cron/test-send path with no HTTP proxy
+        # timeout to dodge, so it's fine to wait out a cold cache instead of
+        # risking an empty "warming" result for a less-visited timeframe like 3d/1w.
+        data = await refresh_scan(tf, 100)
+        resp = _build_response(data, min_conf)
+        sigs = sorted(resp.signals, key=lambda s: s.confidence, reverse=True)[:top_n]
+        total_calls += len(sigs)
+
+        sections += (
+            f'<div style="margin-bottom:20px;">'
+            f'<div style="font-size:12px;font-weight:700;color:#8b95a1;text-transform:uppercase;'
+            f'letter-spacing:0.05em;margin-bottom:8px;">{TOP_CALLS_LABELS[tf]} Top Calls</div>'
+        )
+        if not sigs:
+            sections += '<div style="color:#8b95a1;font-size:13px;">No qualifying signals at this time.</div>'
+        else:
+            for s in sigs:
+                d = s.direction.value if hasattr(s.direction, "value") else s.direction
+                color = "#22c55e" if d == "LONG" else "#ef4444"
+                arrow = "&#9650;" if d == "LONG" else "&#9660;"
+                sections += f"""
+                <div style="background:#0b0e11;border:1px solid #232a33;border-radius:10px;padding:12px;margin-bottom:8px;">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                    <div style="font-weight:700;">{s.symbol.replace('USDT','')}<span style="color:#6b7480;">/USDT</span></div>
+                    <div style="color:{color};font-weight:700;">{arrow} {d} &middot; ${s.price:,.4f}</div>
+                  </div>
+                  <div style="font-size:12px;color:#c7ccd1;line-height:1.5;">{_call_rationale(s)}</div>
+                </div>"""
+        sections += "</div>"
+
+    subject = f"[CryptoSignal] Top Calls: {total_calls} picks across 1D/3D/1W"
+    return subject, _wrap("Top Calls — 1D / 3D / 1W", sections)
+
+
 _BUILDERS = {
     "signals": _build_signals,
     "scanner": _build_signals,
     "track-record": _build_track_record,
     "market": _build_market,
+    "top-calls": _build_top_calls,
 }
 
 

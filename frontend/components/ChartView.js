@@ -6,6 +6,14 @@ import clsx from "clsx";
 
 const TFS = ["1m","5m","15m","1h","4h","1d","3d","1w"];
 const POPULAR = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","AVAXUSDT"];
+
+// Mirrors backend main.py's normalize_symbol(): a symbol already ending in a
+// real quote asset (BTC-quoted pairs like "ETHBTC" included) keeps that quote
+// for display; everything else is assumed USDT.
+function splitQuote(sym) {
+  if (sym.endsWith("BTC") && sym.length > 3) return { base: sym.slice(0, -3), quote: "BTC" };
+  return { base: sym.replace("USDT", ""), quote: "USDT" };
+}
 const SPEEDS = [0.5, 1, 2, 4];
 
 // Truncate every time-series in chartData to the first `count` bars so the
@@ -138,7 +146,7 @@ export default function ChartView({ defaultSymbol = "BTCUSDT" }) {
             [-webkit-mask-image:linear-gradient(to_right,black_92%,transparent_100%)]
             lg:[mask-image:none] lg:[-webkit-mask-image:none]"
         >
-          <span className="text-sm font-bold text-tx shrink-0">{symbol.replace("USDT","")}<span className="text-tx-muted font-normal">/USDT</span></span>
+          <span className="text-sm font-bold text-tx shrink-0">{splitQuote(symbol).base}<span className="text-tx-muted font-normal">/{splitQuote(symbol).quote}</span></span>
           <div className="flex gap-0.5 shrink-0">
             {TFS.map(tf => (
               <button

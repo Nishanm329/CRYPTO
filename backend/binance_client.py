@@ -711,6 +711,75 @@ async def get_top_volume_pairs(n: int = 50) -> List[str]:
     return pairs[:n]
 
 
+# Cache for BTC-quoted pairs (e.g. ETHBTC, SOLBTC) — kept separate from the
+# USDT pair cache above since they're different symbol universes.
+_btc_pair_cache: List[str] = []
+_btc_pair_cache_ts: float = 0
+
+
+async def get_all_btc_pairs(min_volume_usdt: float = 0) -> List[str]:
+    """Return all actively trading BTC-quoted spot pairs (altcoin-vs-BTC), sorted
+    by 24h volume. Binance only lists ~38 of these total (most altcoin liquidity
+    moved to USDT pairs years ago), so unlike get_all_usdt_pairs this defaults to
+    no volume floor — every listed pair is included, just liquidity-ranked. A
+    non-zero min_volume_usdt is still supported: a BTC pair's quoteVolume is
+    denominated in BTC, not dollars, so it's converted to a USD-equivalent using
+    the current BTC/USDT price before comparing (a raw BTC-terms threshold tuned
+    for USDT pairs would reject nearly everything)."""
+    global _btc_pair_cache, _btc_pair_cache_ts
+    import time
+
+    if _btc_pair_cache and (time.time() - _btc_pair_cache_ts) < _CACHE_TTL:
+        return _btc_pair_cache
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(f"{BINANCE_BASE}/api/v3/exchangeInfo")
+        info = resp.json()
+        if not isinstance(info, dict) or "symbols" not in info:
+            return _btc_pair_cache or []
+
+        ticker_resp = await client.get(f"{BINANCE_BASE}/api/v3/ticker/24hr")
+        ticker_data = ticker_resp.json()
+        if not isinstance(ticker_data, list):
+            return _btc_pair_cache or []
+
+        btc_usdt_price = next(
+            (float(t["lastPrice"]) for t in ticker_data
+             if t.get("symbol") == "BTCUSDT" and t.get("lastPrice")),
+            None,
+        )
+        if not btc_usdt_price:
+            return _btc_pair_cache or []
+
+        vol_btc = {t["symbol"]: float(t.get("quoteVolume", 0)) for t in ticker_data if "symbol" in t}
+
+        pairs = []
+        for s in info["symbols"]:
+            base_asset = s.get("baseAsset", "")
+            if base_asset in STABLECOINS or base_asset == "BTC":
+                continue
+            if (
+                s["quoteAsset"] == "BTC"
+                and s["status"] == "TRADING"
+                and s["isSpotTradingAllowed"]
+            ):
+                usd_equiv_vol = vol_btc.get(s["symbol"], 0) * btc_usdt_price
+                if usd_equiv_vol >= min_volume_usdt:
+                    pairs.append(s["symbol"])
+
+    pairs.sort(key=lambda p: vol_btc.get(p, 0), reverse=True)
+    _btc_pair_cache = pairs
+    _btc_pair_cache_ts = time.time()
+    return pairs
+
+
+async def get_top_btc_volume_pairs(n: int = 100) -> List[str]:
+    """Return top N BTC-quoted pairs (e.g. ETHBTC) by 24h USD-equivalent volume —
+    for an altcoins-vs-BTC relative-strength scan rather than vs-USDT."""
+    pairs = await get_all_btc_pairs()
+    return pairs[:n]
+
+
 # Caches the full-market ticker snapshot briefly so several near-simultaneous
 # callers (navbar + active view + scanner, etc.) share one Binance round-trip
 # instead of each re-downloading ~2000 symbols.

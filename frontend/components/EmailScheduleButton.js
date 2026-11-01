@@ -18,6 +18,7 @@ const FILTER_FIELDS = {
   scanner: ["timeframe", "min_confidence", "direction", "top_n"],
   market: ["top_n"],
   "track-record": [],
+  "top-calls": ["min_confidence", "top_n"],
 };
 
 function MailIcon() {

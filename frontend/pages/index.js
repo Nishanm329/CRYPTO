@@ -107,10 +107,16 @@ export default function Home() {
 
   const handleSelectSymbol = useCallback((sym) => {
     setSelectedSymbol(sym);
-    setActiveNav("dashboard"); // jump to dashboard when selecting a coin
+    setActiveNav("chart"); // jump to the full chart when selecting a coin
   }, []);
 
-  const displaySymbol = selectedSymbol ? selectedSymbol.replace("USDT", "/USDT") : "BTC/USDT";
+  // A BTC-quoted symbol (e.g. "LINKBTC") has no "USDT" substring to split on,
+  // so it needs its own case rather than falling through the USDT replace.
+  const displaySymbol = !selectedSymbol
+    ? "BTC/USDT"
+    : selectedSymbol.endsWith("BTC") && selectedSymbol.length > 3
+      ? `${selectedSymbol.slice(0, -3)}/BTC`
+      : selectedSymbol.replace("USDT", "/USDT");
 
   // ── Standalone views (no header/stats) ──────────────────────────────────────
   if (activeNav === "backtest") return (

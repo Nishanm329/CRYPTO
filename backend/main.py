@@ -10,7 +10,7 @@ import pandas as pd
 from binance_client import get_klines, get_fear_greed_index, get_top_volume_pairs, batch_get_tickers, get_derivatives_data, get_orderbook_imbalance, get_onchain_sentiment, get_onchain_macro, get_derivatives_dashboard, get_liquidation_map
 from indicators import add_all_indicators, calculate_stoch_rsi, find_liquidity_levels
 from signals import generate_signal, HTF_MAP, compute_htf_bias
-from scanner import scan_market, refresh_scan, scan_precross_market, scan_divergence_market
+from scanner import scan_market, refresh_scan, scan_precross_market, scan_divergence_market, scan_btc_market
 from track_record import seed_if_empty, evaluate_open, get_stats
 import email_digest
 import bot_engine
@@ -75,10 +75,16 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 
 
 def normalize_symbol(symbol: str) -> str:
+    """Uppercase and, for a bare base-asset shorthand (e.g. "eth"), default the
+    quote to USDT. A symbol already ending in a real quote asset is left alone —
+    including BTC-quoted pairs like "ETHBTC" (the `len > 3` guard keeps bare
+    "BTC" itself defaulting to BTCUSDT, not passing through unchanged)."""
     symbol = symbol.upper()
-    if not symbol.endswith("USDT"):
-        symbol = f"{symbol}USDT"
-    return symbol
+    if symbol.endswith("USDT"):
+        return symbol
+    if symbol.endswith("BTC") and len(symbol) > 3:
+        return symbol
+    return f"{symbol}USDT"
 
 
 # Background scan warmer. Keeps the default 1h/100-pair scan pre-computed so the
@@ -99,9 +105,28 @@ async def _scan_warmer():
         await asyncio.sleep(60)
 
 
+async def _email_scheduler():
+    """Fire due email digests in-process so schedules work without an external
+    cron. run_due() is idempotent (it checks each config's last_sent), so this
+    is safe alongside a cron hitting /api/email/run. Disable with
+    EMAIL_SCHEDULER=off."""
+    await asyncio.sleep(10)
+    while True:
+        try:
+            if email_digest.smtp_configured():
+                result = await email_digest.run_due()
+                if result["sent"] or result["errors"]:
+                    logger.info("email scheduler: %s", result)
+        except Exception as e:
+            logger.warning("email scheduler failed: %s", e)
+        await asyncio.sleep(60)
+
+
 @app.on_event("startup")
 async def _start_background_tasks():
     asyncio.create_task(_scan_warmer())
+    if os.getenv("EMAIL_SCHEDULER", "on").lower() != "off":
+        asyncio.create_task(_email_scheduler())
 
 
 @app.get("/health")
@@ -442,6 +467,21 @@ async def scan_divergence(
     surfaced on its own, independent of any EMA cross."""
     try:
         return await scan_divergence_market(timeframe, max_pairs, use_cache=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/scan/btc")
+async def scan_btc(
+    timeframe: str = "1d",
+    max_pairs: int = Query(100, ge=10, le=200),
+    min_confidence: int = Query(50, ge=0, le=100),
+):
+    """Same signal engine as /api/scan, run against the top BTC-quoted pairs
+    (e.g. ETHBTC, SOLBTC) instead of USDT pairs — relative strength vs BTC
+    rather than vs the dollar. Not written to the Track Record (see
+    scan_btc_symbol's docstring in scanner.py)."""
+    try:
+        return await scan_btc_market(timeframe, max_pairs, min_confidence, use_cache=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

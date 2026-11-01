@@ -9,7 +9,9 @@ from datetime import datetime
 
 import pandas as pd
 
-from binance_client import get_top_volume_pairs, get_klines, batch_get_tickers, get_fear_greed_index
+from binance_client import (
+    get_top_volume_pairs, get_top_btc_volume_pairs, get_klines, batch_get_tickers, get_fear_greed_index,
+)
 from signals import generate_signal, HTF_MAP, compute_htf_bias
 from indicators import (
     add_all_indicators,
@@ -118,6 +120,127 @@ async def _compute_scan(timeframe: str, max_pairs: int) -> dict:
         "total_scanned": len(pairs),
         "scan_duration_ms": round((time.time() - t_start) * 1000, 1),
     }
+
+
+async def scan_btc_symbol(
+    symbol: str,
+    timeframe: str,
+    sentiment_score: float,
+    ticker_data: dict,
+) -> Optional[ScanResult]:
+    """Same as scan_symbol, but for a BTC-quoted pair (e.g. ETHBTC) — an altcoin's
+    signal relative to BTC rather than to the dollar. Deliberately does NOT call
+    record_signal(): the Track Record's win-rate stats are for actionable
+    USDT-denominated trades, and mixing in a different quote asset would corrupt
+    that ledger rather than extend it."""
+    try:
+        df = await get_klines(symbol, timeframe, limit=200)
+
+        htf_tf = HTF_MAP.get(timeframe)
+        htf_bias = None
+        if htf_tf:
+            try:
+                htf_df = await get_klines(symbol, htf_tf, limit=200)
+                htf_bias = compute_htf_bias(htf_df)
+            except Exception:
+                htf_bias = None
+
+        signal = generate_signal(
+            df, symbol, timeframe, sentiment_score, min_confidence=0,
+            htf_bias=htf_bias, htf_timeframe=htf_tf,
+        )
+        if signal is None:
+            return None
+
+        ticker = ticker_data.get(symbol, {})
+        price = float(ticker.get("lastPrice", df["close"].iloc[-1]))
+        change_24h = float(ticker.get("priceChangePercent", 0))
+        volume_24h = float(ticker.get("quoteVolume", 0))
+
+        return ScanResult(
+            symbol=symbol,
+            timeframe=timeframe,
+            direction=signal.direction,
+            confidence=signal.confidence,
+            ai_probability=signal.ai_probability,
+            price=price,
+            change_24h=change_24h,
+            volume_24h=volume_24h,
+            rr_ratio=signal.rr_ratio,
+            timestamp=signal.timestamp,
+        )
+    except Exception:
+        return None
+
+
+BTC_SCAN_CACHE: dict = {}
+_btc_inflight: dict = {}
+
+
+async def _compute_btc_scan(timeframe: str, max_pairs: int) -> dict:
+    t_start = time.time()
+    pairs = await get_top_btc_volume_pairs(max_pairs)
+    ticker_data = await batch_get_tickers(pairs)
+
+    fear_greed = await get_fear_greed_index()
+    fg_value = fear_greed.get("value", 50)
+    sentiment_score = (fg_value - 50) / 50
+
+    semaphore = asyncio.Semaphore(CONCURRENT_REQUESTS)
+
+    async def bounded_scan(sym):
+        async with semaphore:
+            return await scan_btc_symbol(sym, timeframe, sentiment_score, ticker_data)
+
+    results = await asyncio.gather(*[bounded_scan(s) for s in pairs], return_exceptions=False)
+    all_results = [r for r in results if r is not None]
+    all_results.sort(key=lambda x: (x.confidence, x.ai_probability), reverse=True)
+
+    return {
+        "results": all_results,
+        "total_scanned": len(pairs),
+        "scan_duration_ms": round((time.time() - t_start) * 1000, 1),
+    }
+
+
+async def refresh_btc_scan(timeframe: str, max_pairs: int) -> dict:
+    """Mirrors refresh_scan()'s cache-stampede protection, scoped to the BTC scan cache."""
+    key = f"{timeframe}_{max_pairs}"
+    existing = _btc_inflight.get(key)
+    if existing is not None and not existing.done():
+        return await existing
+
+    task = asyncio.ensure_future(_compute_btc_scan(timeframe, max_pairs))
+    _btc_inflight[key] = task
+    try:
+        data = await task
+        BTC_SCAN_CACHE[key] = {"ts": time.time(), **data}
+        return data
+    finally:
+        _btc_inflight.pop(key, None)
+
+
+async def scan_btc_market(
+    timeframe: str = "1d",
+    max_pairs: int = 100,
+    min_confidence: int = 50,
+    use_cache: bool = True,
+) -> MarketScanResponse:
+    """Same cache-first / stale-while-revalidate pattern as scan_market(), scoped
+    to the BTC-quoted pair universe (altcoins vs BTC rather than vs USDT)."""
+    key = f"{timeframe}_{max_pairs}"
+    entry = BTC_SCAN_CACHE.get(key)
+
+    if use_cache and entry is not None:
+        if time.time() - entry["ts"] >= CACHE_TTL:
+            asyncio.ensure_future(refresh_btc_scan(timeframe, max_pairs))
+        return _build_response(entry, min_confidence)
+
+    asyncio.ensure_future(refresh_btc_scan(timeframe, max_pairs))
+    return MarketScanResponse(
+        signals=[], total_scanned=0, long_count=0, short_count=0,
+        scan_duration_ms=0, warming=True,
+    )
 
 
 async def refresh_scan(timeframe: str, max_pairs: int) -> dict:

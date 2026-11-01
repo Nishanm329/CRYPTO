@@ -105,6 +105,9 @@ export const api = {
   scanDivergence: (timeframe = "1h", maxPairs = 50) =>
     apiFetch(`/api/scan/divergence?timeframe=${timeframe}&max_pairs=${maxPairs}`),
 
+  scanBtc: (timeframe = "1d", maxPairs = 100, minConfidence = 50) =>
+    apiFetch(`/api/scan/btc?timeframe=${timeframe}&max_pairs=${maxPairs}&min_confidence=${minConfidence}`),
+
   signal: (symbol, timeframe = "1d") =>
     apiFetch(`/api/signal/${symbol}?timeframe=${timeframe}`),
 
