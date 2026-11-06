@@ -147,8 +147,10 @@ function SignalCard({ sig, rank, selected, onClick, onExecuteTrade, quote = "USD
               {isLong ? "▲ LONG" : "▼ SHORT"}
             </span>
           </div>
-          <div className="text-[11px] font-mono text-tx-muted mt-0.5 truncate">
-            {priceSymbol}{formatPrice(sig.price)} · Target {priceSymbol}{formatPrice(upsideTarget)} · Stop {priceSymbol}{formatPrice(exitPrice)}
+          <div className="text-[11px] font-mono text-tx-muted mt-0.5 flex flex-wrap gap-x-2">
+            <span>{priceSymbol}{formatPrice(sig.price)}</span>
+            <span>Target {priceSymbol}{formatPrice(upsideTarget)}</span>
+            <span>Stop {priceSymbol}{formatPrice(exitPrice)}</span>
           </div>
         </div>
         <div className="text-right shrink-0">
@@ -548,7 +550,7 @@ export default function SignalsView({ onSelectSymbol, selectedSymbol, variant = 
                 >{d}</button>
               ))}
             </div>
-            <div className="flex items-center gap-1 ml-auto">
+            <div className="flex items-center gap-1 sm:ml-auto">
               {(precrossMode ? PRECROSS_TFS : ["1h", "4h", "1d", "1w"]).map(tf => (
                 <button key={tf} onClick={() => setTimeframe(tf)}
                   className={clsx("min-w-[40px] px-2.5 py-1 rounded-lg text-xs font-semibold transition-all",
