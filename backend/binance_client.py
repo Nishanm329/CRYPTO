@@ -47,7 +47,10 @@ FEAR_GREED_API = "https://api.alternative.me/fng/"
 STABLECOINS = {
     "USDT", "USDC", "BUSD", "DAI", "TUSD", "USDP", "FRAX",
     "USDE", "EURC", "EURS", "EURT", "GBPT", "JPYT",
-    "FDUSD", "MATIC", "GRAI", "USD1",  # All pegged to ~$1.00
+    "FDUSD", "GRAI", "USD1",
+    "USDS", "PYUSD", "RLUSD", "RWUSD", "BFUSD", "XUSD", "USDG", "USDX",
+    "USDD", "GUSD", "LUSD", "SUSD", "CRVUSD", "USTC", "UST", "USDT0", "USDF",
+    "AEUR", "EURI", "EUR", "U",  # all pegged to a fiat currency
 }
 
 # Cache to avoid hammering Binance
