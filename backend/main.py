@@ -14,6 +14,7 @@ from scanner import scan_market, refresh_scan
 from track_record import seed_if_empty, evaluate_open, get_stats
 import email_digest
 import kronos_forecaster
+import kronos_scanner
 import bot_engine
 from backtester import run_backtest
 from combination_backtester import run_combination_backtest, run_walk_forward_backtest
@@ -348,6 +349,24 @@ async def get_chart(symbol: str, timeframe: str = "15m", limit: int = Query(100,
         "latest_values": latest_values,
     }
     return _cache_set(cache_key, result, ttl=15)
+
+@app.get("/api/scan/kronos")
+async def scan_kronos_endpoint(
+    timeframe: str = "1h",
+    max_pairs: int = Query(kronos_scanner.DEFAULT_PAIRS, ge=5, le=kronos_scanner.MAX_PAIRS),
+    pred_len: int = Query(kronos_scanner.DEFAULT_PRED_LEN, ge=1, le=kronos_forecaster.MAX_PRED_LEN),
+):
+    """Scanner mode ranked by the Kronos forecast. Non-blocking: returns
+    `warming` + progress while the background scan runs; poll until complete."""
+    if timeframe not in VALID_TIMEFRAMES:
+        raise HTTPException(status_code=400, detail=f"Invalid timeframe: {timeframe}")
+    try:
+        return await kronos_scanner.scan_kronos(timeframe, max_pairs, pred_len)
+    except kronos_forecaster.KronosUnavailable as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 @app.get("/api/kronos/status")
 async def kronos_status():

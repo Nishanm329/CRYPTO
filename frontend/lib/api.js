@@ -61,6 +61,7 @@ async function apiFetch(path, opts = {}) {
   if (path.includes('/api/sentiment')) cacheDuration = 300000; // 5m for sentiment
   else if (path.includes('/api/market-overview')) cacheDuration = 120000; // 2m for market data
   else if (path.includes('/api/chart/')) cacheDuration = 30000; // 30s for charts
+  else if (path.includes('/api/scan/kronos')) cacheDuration = 3000; // polled for progress
   else if (path.includes('/api/kronos/')) cacheDuration = 300000; // 5m — model inference is slow
 
   const isGet = !opts.method || opts.method === "GET";
@@ -111,6 +112,10 @@ export const api = {
     apiFetch(`/api/kronos/${symbol}?timeframe=${timeframe}&pred_len=${predLen}&samples=${samples}`),
 
   kronosStatus: () => apiFetch("/api/kronos/status"),
+
+  // Scanner mode ranked by Kronos forecasts. Non-blocking: poll while `warming`.
+  kronosScan: (timeframe = "1h", maxPairs = 20, predLen = 24) =>
+    apiFetch(`/api/scan/kronos?timeframe=${timeframe}&max_pairs=${maxPairs}&pred_len=${predLen}`),
 
   sentiment: () => apiFetch("/api/sentiment"),
 
