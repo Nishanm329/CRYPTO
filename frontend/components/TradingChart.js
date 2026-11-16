@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { createChart, ColorType, CrosshairMode, LineStyle } from "lightweight-charts";
-import { formatPrice } from "../lib/api";
+import { api, formatPrice } from "../lib/api";
 import clsx from "clsx";
 
 const BASE_OPTS = {
@@ -108,7 +108,7 @@ function LegendChip({ color, label, value }) {
   );
 }
 
-export default function TradingChart({ chartData, loading, className = "" }) {
+export default function TradingChart({ chartData, loading, className = "", forecastEnabled = true }) {
   const mainContainerRef = useRef(null);
   const rsiContainerRef = useRef(null);
   const macdContainerRef = useRef(null);
@@ -122,7 +122,8 @@ export default function TradingChart({ chartData, loading, className = "" }) {
 
   const [hoveredBar, setHoveredBar] = useState(null);
   const [lv, setLv] = useState(null);
-  const [activeIndicators, setActiveIndicators] = useState({ ema: true, bb: true, vwap: true, ew: false, rsi: true, macd: true, stoch: true });
+  const [activeIndicators, setActiveIndicators] = useState({ ema: true, bb: true, vwap: true, ew: false, rsi: true, macd: true, stoch: true, kronos: false });
+  const [kronos, setKronos] = useState({ data: null, loading: false, error: null });
 
   // Default the oscillator sub-panes off on small screens to avoid overwhelming
   // the viewport on first load. Runs post-mount only, so it can't cause a
@@ -180,6 +181,13 @@ export default function TradingChart({ chartData, loading, className = "" }) {
         seriesRef.current.bbLower = mc.addLineSeries({ color: "rgba(100,160,255,0.6)", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, title: "" });
         seriesRef.current.vwap = mc.addLineSeries({ color: "#c084fc", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, title: "" });
         seriesRef.current.ew = mc.addLineSeries({ color: "#eab308", lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false, title: "" });
+        // Kronos forecast: ghost candles extending past the last real bar.
+        seriesRef.current.kronos = mc.addCandlestickSeries({
+          upColor: "rgba(168,85,247,0.35)", downColor: "rgba(168,85,247,0.08)",
+          borderUpColor: "#a855f7", borderDownColor: "#a855f7",
+          wickUpColor: "#a855f7", wickDownColor: "#a855f7",
+          priceLineVisible: false, lastValueVisible: false,
+        });
         seriesRef.current.volume = mc.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol" });
         mc.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
 
@@ -357,6 +365,37 @@ export default function TradingChart({ chartData, loading, className = "" }) {
     });
   }, [activeIndicators.ema, activeIndicators.bb, activeIndicators.vwap, activeIndicators.ew]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Kronos forecast overlay ──
+  const kronosOn = activeIndicators.kronos && forecastEnabled;
+  const kSymbol = chartData?.symbol;
+  const kTimeframe = chartData?.timeframe;
+  useEffect(() => {
+    if (!kronosOn || !kSymbol || !kTimeframe) {
+      setKronos((k) => (k.data || k.loading || k.error ? { data: null, loading: false, error: null } : k));
+      return;
+    }
+    let cancelled = false;
+    setKronos({ data: null, loading: true, error: null });
+    api.kronos(kSymbol, kTimeframe)
+      .then((data) => !cancelled && setKronos({ data, loading: false, error: null }))
+      .catch((e) => !cancelled && setKronos({ data: null, loading: false, error: e.message }));
+    return () => { cancelled = true; };
+  }, [kronosOn, kSymbol, kTimeframe]);
+
+  useEffect(() => {
+    const series = seriesRef.current.kronos;
+    if (!series) return;
+    const lastTime = chartData?.bars?.[chartData.bars.length - 1]?.time ?? 0;
+    // Only draw candles after the last real bar, in case live data moved on.
+    const bars = kronos.data?.forecast?.filter((b) => b.time > lastTime) ?? [];
+    try {
+      series.setData(bars.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
+      if (bars.length) mainChartRef.current?.timeScale().fitContent();
+    } catch (e) {
+      console.error("[TradingChart] Kronos overlay error:", e);
+    }
+  }, [kronos.data, chartData]);
+
   const bar = hoveredBar;
 
   return (
@@ -387,6 +426,7 @@ export default function TradingChart({ chartData, loading, className = "" }) {
             { key: "rsi", label: "RSI" },
             { key: "macd", label: "MACD" },
             { key: "stoch", label: "Stoch" },
+            ...(forecastEnabled ? [{ key: "kronos", label: "Kronos AI" }] : []),
           ].map(({ key, label }) => (
             <button
               key={key}
@@ -443,6 +483,21 @@ export default function TradingChart({ chartData, loading, className = "" }) {
               <LegendChip color="rgba(100,160,255,0.9)" label="BB 20,2" value={lv.bb_upper} />
             )}
             {activeIndicators.vwap && <LegendChip color="#c084fc" label="VWAP" value={lv?.vwap} />}
+            {kronosOn && (
+              <span className="flex items-center gap-1 text-[10px] font-mono" title={kronos.data?.disclaimer}>
+                <span className="w-2 h-2 rounded-sm shrink-0 border border-[#a855f7] bg-[#a855f7]/40" />
+                <span className="text-tx-muted">Kronos</span>
+                {kronos.loading && <span className="text-tx-dim">forecasting…</span>}
+                {kronos.error && <span className="text-brand-red">{kronos.error}</span>}
+                {kronos.data?.summary && (
+                  <span style={{ color: kronos.data.summary.change_pct >= 0 ? "#00c896" : "#ef4444" }}>
+                    {kronos.data.summary.change_pct >= 0 ? "+" : ""}
+                    {kronos.data.summary.change_pct.toFixed(2)}% in {kronos.data.pred_len} bars
+                    {" → "}{formatPrice(kronos.data.summary.pred_close)}
+                  </span>
+                )}
+              </span>
+            )}
           </div>
 
           {/* Candlestick chart */}

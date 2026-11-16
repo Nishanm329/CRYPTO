@@ -1,0 +1,9 @@
+# Optional: Kronos candlestick forecasting (/api/kronos/*).
+# Install via ./scripts/install_kronos.sh — not needed for the core API.
+# For a CPU-only (much smaller) torch wheel use:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0
+einops==0.8.1
+huggingface_hub==0.33.1
+safetensors==0.6.2
+tqdm>=4.66

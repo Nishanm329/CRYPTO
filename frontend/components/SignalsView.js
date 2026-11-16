@@ -3,6 +3,7 @@ import useSWR from "swr";
 import { api, formatPrice, formatChange, confidenceColor } from "../lib/api";
 import TradeExecutionModal from "./TradeExecutionModal";
 import EmailScheduleButton from "./EmailScheduleButton";
+import KronosScanPanel from "./KronosScanPanel";
 import clsx from "clsx";
 
 const TFS = ["1m","5m","15m","1h","4h","1d","3d","1w"];
@@ -149,6 +150,9 @@ export default function SignalsView({ onSelectSymbol, selectedSymbol, variant = 
   const [sortKey, setSortKey] = useState("confidence");
   // Scanner lets the user set their own confidence floor; null = adaptive default.
   const [minConf, setMinConf] = useState(null);
+  // Scanner-only: "ema" = classic signal scan, "kronos" = ranked by Kronos forecast.
+  const [mode, setMode] = useState("ema");
+  const kronosMode = isScanner && mode === "kronos";
 
   // Adaptive scan parameters based on timeframe for optimization
   const getScanParams = (tf) => {
@@ -211,8 +215,21 @@ export default function SignalsView({ onSelectSymbol, selectedSymbol, variant = 
           )}
         </div>
 
-        {/* Scanner-only: user-controlled minimum confidence threshold */}
+        {/* Scanner-only: scan engine */}
         {isScanner && (
+          <div className="flex items-center gap-1 p-0.5 rounded-lg bg-bg-card border border-border">
+            {[["ema", "EMA Signals"], ["kronos", "Kronos AI"]].map(([m, l]) => (
+              <button key={m} onClick={() => setMode(m)}
+                className={clsx("px-2.5 py-1 rounded-md text-xs font-semibold transition-all",
+                  mode === m ? (m === "kronos" ? "bg-purple-500 text-white" : "bg-brand-blue text-white") : "text-tx-muted hover:text-tx"
+                )}
+              >{l}</button>
+            ))}
+          </div>
+        )}
+
+        {/* Scanner-only: user-controlled minimum confidence threshold */}
+        {isScanner && !kronosMode && (
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-tx-muted">Min Conf</span>
             {[null, 40, 55, 70, 85].map((c) => (
@@ -226,7 +243,7 @@ export default function SignalsView({ onSelectSymbol, selectedSymbol, variant = 
         )}
 
         {/* Summary badges */}
-        {scanData && (
+        {scanData && !kronosMode && (
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-brand-green/15 text-brand-green">▲ {longCount} Long</span>
             <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-brand-red/15 text-brand-red">▼ {shortCount} Short</span>
@@ -244,7 +261,7 @@ export default function SignalsView({ onSelectSymbol, selectedSymbol, variant = 
           ))}
           <div className="w-px h-4 bg-border mx-1" />
           {/* Sort */}
-          {[["confidence","Conf"],["ai","AI"],["rr","R:R"]].map(([k,l]) => (
+          {!kronosMode && [["confidence","Conf"],["ai","AI"],["rr","R:R"]].map(([k,l]) => (
             <button key={k} onClick={() => setSortKey(k)}
               className={clsx("px-2.5 py-1 rounded-lg text-xs transition-all",
                 sortKey === k ? "bg-border text-tx" : "text-tx-muted hover:text-tx"
@@ -274,19 +291,29 @@ export default function SignalsView({ onSelectSymbol, selectedSymbol, variant = 
 
       {/* Grid */}
       <div className="flex-1 overflow-y-auto no-scrollbar p-4">
-        {(isLoading || warming) && (
+        {/* The EMA scan above keeps running in Kronos mode: the backend uses its
+            cached results to mark where Kronos agrees with the EMA signal. */}
+        {kronosMode && (
+          <KronosScanPanel
+            timeframe={timeframe}
+            filterDir={filterDir}
+            onSelectSymbol={onSelectSymbol}
+            selectedSymbol={selectedSymbol}
+          />
+        )}
+        {!kronosMode && (isLoading || warming) && (
           <div className="flex items-center justify-center h-48 gap-2 text-tx-muted">
             <div className="w-5 h-5 border-2 border-brand-blue border-t-transparent rounded-full animate-spin" />
             <span className="text-sm">{warming ? "Scanning top 100 pairs…" : "Scanning market…"}</span>
           </div>
         )}
-        {!isLoading && !warming && signals.length === 0 && (
+        {!kronosMode && !isLoading && !warming && signals.length === 0 && (
           <div className="flex flex-col items-center justify-center h-48 text-tx-muted">
             <span className="text-sm">No signals found</span>
             <span className="text-xs mt-1">Try a different timeframe</span>
           </div>
         )}
-        {!isLoading && !warming && (
+        {!kronosMode && !isLoading && !warming && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
             {signals.map(sig => (
               <SignalCard
