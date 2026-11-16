@@ -208,7 +208,7 @@ export default function ChartView({ defaultSymbol = "BTCUSDT" }) {
         )}
 
         <div className="flex-1 min-h-0">
-          <TradingChart chartData={displayData} loading={isLoading} />
+          <TradingChart chartData={displayData} loading={isLoading} forecastEnabled={!replay} />
         </div>
       </div>
     </div>

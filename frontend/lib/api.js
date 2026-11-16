@@ -61,6 +61,7 @@ async function apiFetch(path, opts = {}) {
   if (path.includes('/api/sentiment')) cacheDuration = 300000; // 5m for sentiment
   else if (path.includes('/api/market-overview')) cacheDuration = 120000; // 2m for market data
   else if (path.includes('/api/chart/')) cacheDuration = 30000; // 30s for charts
+  else if (path.includes('/api/kronos/')) cacheDuration = 300000; // 5m — model inference is slow
 
   const isGet = !opts.method || opts.method === "GET";
   const cacheKey = `GET:${path}`;
@@ -104,6 +105,12 @@ export const api = {
 
   chart: (symbol, timeframe = "1h", limit = 200) =>
     apiFetch(`/api/chart/${symbol}?timeframe=${timeframe}&limit=${limit}`),
+
+  // Kronos foundation-model forecast of the next `predLen` candles.
+  kronos: (symbol, timeframe = "1h", predLen = 24, samples = 1) =>
+    apiFetch(`/api/kronos/${symbol}?timeframe=${timeframe}&pred_len=${predLen}&samples=${samples}`),
+
+  kronosStatus: () => apiFetch("/api/kronos/status"),
 
   sentiment: () => apiFetch("/api/sentiment"),
 

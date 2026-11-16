@@ -13,6 +13,7 @@ from signals import generate_signal, HTF_MAP, compute_htf_bias
 from scanner import scan_market, refresh_scan
 from track_record import seed_if_empty, evaluate_open, get_stats
 import email_digest
+import kronos_forecaster
 import bot_engine
 from backtester import run_backtest
 from combination_backtester import run_combination_backtest, run_walk_forward_backtest
@@ -347,6 +348,76 @@ async def get_chart(symbol: str, timeframe: str = "15m", limit: int = Query(100,
         "latest_values": latest_values,
     }
     return _cache_set(cache_key, result, ttl=15)
+
+@app.get("/api/kronos/status")
+async def kronos_status():
+    return kronos_forecaster.status()
+
+
+@app.get("/api/kronos/{symbol}")
+async def get_kronos_forecast(
+    symbol: str,
+    timeframe: str = "1h",
+    lookback: int = Query(400, ge=64, le=2048),
+    pred_len: int = Query(24, ge=1, le=kronos_forecaster.MAX_PRED_LEN),
+    samples: int = Query(1, ge=1, le=kronos_forecaster.MAX_SAMPLES),
+):
+    """Forecast the next `pred_len` candles with the Kronos foundation model."""
+    symbol = normalize_symbol(symbol)
+    if timeframe not in VALID_TIMEFRAMES:
+        raise HTTPException(status_code=400, detail=f"Invalid timeframe: {timeframe}")
+    lookback = min(lookback, kronos_forecaster.MAX_CONTEXT)
+
+    cache_key = f"kronos:{symbol}:{timeframe}:{lookback}:{pred_len}:{samples}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        df = await get_klines(symbol, timeframe, min(lookback, 1000))
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    try:
+        pred = await asyncio.to_thread(
+            kronos_forecaster.forecast, df, timeframe, pred_len, samples
+        )
+    except kronos_forecaster.KronosUnavailable as e:
+        # 501 rather than 503 so clients don't mistake it for a cold start and retry.
+        raise HTTPException(status_code=501, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Kronos forecast failed for %s %s", symbol, timeframe)
+        raise HTTPException(status_code=500, detail=f"Kronos forecast failed: {e}")
+
+    forecast_bars = [
+        {
+            "time": int(ts.timestamp()),
+            "open": round(float(r.open), 6),
+            "high": round(float(r.high), 6),
+            "low": round(float(r.low), 6),
+            "close": round(float(r.close), 6),
+            "volume": round(float(r.volume), 2),
+        }
+        for ts, r in pred.iterrows()
+    ]
+    result = {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "model": kronos_forecaster.MODEL_NAME,
+        "lookback": min(lookback, len(df)),
+        "pred_len": pred_len,
+        "samples": samples,
+        "generated_at": int(_time.time()),
+        "forecast": forecast_bars,
+        "summary": kronos_forecaster.summarize(float(df["close"].iloc[-1]), pred),
+        "disclaimer": "Model forecast, not financial advice. Sampling-based and uncertain.",
+    }
+    # A new candle invalidates the forecast; cache for one bar (60s–1h).
+    ttl = max(60.0, min(3600.0, kronos_forecaster.interval_delta(timeframe).total_seconds()))
+    return _cache_set(cache_key, result, ttl=ttl)
+
 
 @app.get("/api/signal/{symbol}")
 async def get_signal(symbol: str, timeframe: str = "1d"):
