@@ -1,14 +1,13 @@
 {
   "version": 2,
-  "buildCommand": "npm run build --prefix frontend",
-  "devCommand": "npm run dev --prefix frontend",
-  "installCommand": "npm install --prefix frontend",
   "framework": "nextjs",
   "env": {
     "NEXT_PUBLIC_API_URL": "https://crypto-signals-backend.onrender.com",
     "NEXT_PUBLIC_ENVIRONMENT": "production"
   },
-  "regions": ["sfo1"],
+  "regions": [
+    "sfo1"
+  ],
   "git": {
     "deploymentEnabled": {
       "main": true
